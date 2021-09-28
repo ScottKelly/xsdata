@@ -430,11 +430,13 @@ class Class:
     :param attrs:
     :param inner:
     :param ns_map:
+    :param fqname:
     """
 
     qname: str
     tag: str
     location: str
+    fqname: str = field(default="")
     mixed: bool = field(default=False)
     abstract: bool = field(default=False)
     nillable: bool = field(default=False)
@@ -452,6 +454,7 @@ class Class:
     attrs: List[Attr] = field(default_factory=list)
     inner: List["Class"] = field(default_factory=list)
     ns_map: Dict = field(default_factory=dict)
+
 
     @property
     def name(self) -> str:

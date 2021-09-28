@@ -1,6 +1,7 @@
 import math
 import re
 import textwrap
+from enum import Enum
 from typing import Any
 from typing import Callable
 from typing import Dict
@@ -15,7 +16,7 @@ from xml.sax.saxutils import quoteattr
 from docformatter import format_code
 from jinja2 import Environment
 
-from xsdata.codegen.models import Attr
+from xsdata.codegen.models import Attr, Extension
 from xsdata.codegen.models import AttrType
 from xsdata.codegen.models import Class
 from xsdata.formats.converter import converter
@@ -57,6 +58,7 @@ class Filters:
         "relative_imports",
         "format",
         "import_patterns",
+        "classes"
     )
 
     def __init__(self, config: GeneratorConfig):
@@ -82,6 +84,9 @@ class Filters:
         # Build things
         self.import_patterns = self.build_import_patterns()
 
+    def set_classes(self, classes: List[Class]) -> None:
+        self.classes = classes
+
     def register(self, env: Environment):
         env.globals.update(
             {
@@ -98,6 +103,7 @@ class Filters:
                 "field_definition": self.field_definition,
                 "class_name": self.class_name,
                 "class_params": self.class_params,
+                "table_name": self.table_name,
                 "format_string": self.format_string,
                 "format_docstring": self.format_docstring,
                 "constant_name": self.constant_name,
@@ -151,6 +157,14 @@ class Filters:
 
         return self.safe_name(name, self.class_safe_prefix, self.class_case)
 
+
+    def get_class_for_extension(self, extension: Extension) -> Class:
+        matching_classes = list(filter(lambda x: x.qname == extension.type.qname, self.classes))
+        if len(matching_classes) > 1:
+            raise ValueError(f"Too many matching classes for Extension {extension.type.qname}")
+
+        return matching_classes[0]
+
     def field_definition(
         self,
         attr: Attr,
@@ -159,6 +173,8 @@ class Filters:
         parents: List[str],
     ) -> str:
         """Return the field definition with any extra metadata."""
+        type_names = self.type_names(attr, parents)
+
         default_value = self.field_default_value(attr, ns_map)
         metadata = self.field_metadata(attr, parent_namespace, parents)
 
@@ -172,8 +188,62 @@ class Filters:
 
         if metadata:
             kwargs["metadata"] = metadata
+        if self.has_complex_types(type_names):
+            if len(type_names) > 1:
+                raise ValueError("Multiple types for foreign key is unsupported")
+            type_name = type_names[0]
 
-        return f"field({self.format_arguments(kwargs, 4)})"
+            if type_name == "object":
+                return f"= Field(sa_column=Column(JSONB))"
+            elif type_name == "bytes":
+                return f"= Field(sa_column=Column(LargeBinary()))"
+            else:
+                attr_class = self._find_class_for_attr(attr)
+                if attr_class.is_enumeration:
+                    return f"= Field(sa_column=Column(DbEnum({type_name})))"
+                else:
+                    print(type_name)
+                    print(type_names)
+                    if attr_class.fqname not in type_names[0]:
+                        table_name = self.table_name(attr_class.fqname.split("."))
+                    else:
+                        print("going here")
+                        table_name = self.table_name([item for t in type_names for item in t.split(".")])
+
+                    print(table_name)
+                    return f"= Field(foreign_key=\"{table_name}.id\")"
+
+    def _compare_class(self, hierachy: str, clazz: Class, qname) -> Class:
+        if hierachy:
+            hierachy += "." + self.class_name(clazz.qname)
+        else:
+            hierachy = self.class_name(clazz.qname)
+        if clazz.qname == qname:
+            clazz.fqname = hierachy
+            return clazz
+        for inner_clazz in clazz.inner:
+            #print(clazz.qname + "." + inner_clazz.qname)
+            match = self._compare_class(hierachy, inner_clazz, qname)
+            if match:
+                return match
+
+    def _find_class_for_attr(self, attr) -> Class:
+        for clazz in self.classes:
+            #print(clazz.qname)
+            match = self._compare_class("", clazz, attr.types[0].qname)
+            if match:
+                return match
+        raise ValueError(attr.types[0])
+
+    def table_name(self, parents: List[str]):
+        """
+        Returns SQL table name for a class
+        """
+        parents = [self.class_name(x) for x in parents]
+
+        # do double underscore to avoid situations where Alembic
+        # may generate conflicting index names
+        return "__".join([self.field_case(parent) for parent in parents])
 
     def field_name(self, name: str, class_name: str) -> str:
         """
@@ -582,16 +652,43 @@ class Filters:
 
         return f"lambda: {self.format_metadata(tokens, indent=8)}"
 
-    def field_type(self, attr: Attr, parents: List[str]) -> str:
-        """Generate type hints for the given attribute."""
+    def is_complex_type(self, type_name: str) -> bool:
+         return type_name not in ['bool', "int", "Decimal", "str", "dict",
+                                                 "float", "datetime", "XmlDateTime", "bytes"]
 
-        type_names = collections.unique_sequence(
+    def has_complex_types(self, type_names: List[str]):
+        return bool(set(type_names) - {'bool', "int", "Decimal", "str", "dict",
+                                             "float", "datetime", "XmlDateTime", "bytes"})
+
+    def type_names(self, attr: Attr, parents: List[str]) -> List[str]:
+        return collections.unique_sequence(
             self.field_type_name(x, parents) for x in attr.types
         )
 
+    def field_type(self, attr: Attr, parents: List[str]) -> str:
+        """Generate type hints for the given attribute."""
+        type_names = self.type_names(attr, parents)
+
+        for idx, type_name in enumerate(type_names):
+            if type_name == "XmlDateTime":
+                type_names[idx] = "datetime"
+            # convert "object" types to str since SQL doesn't have an object type
+            elif type_name == "object":
+                type_names[idx] = "dict"
+
         result = ", ".join(type_names)
         if len(type_names) > 1:
+            if self.has_complex_types(type_names):
+                raise ValueError("Unsupported Union Types for Complex Types")
             result = f"Union[{result}]"
+        elif self.has_complex_types(type_names):
+            # don't use parents here because two different classes could
+            # reference the same type
+            attr_class = self._find_class_for_attr(attr)
+            if attr_class.fqname not in type_names[0]:
+                print(type_names[0])
+                print(attr_class.fqname)
+                result = attr_class.fqname
 
         iterable = "Tuple[{}, ...]" if self.format.frozen else "List[{}]"
 
@@ -605,6 +702,7 @@ class Filters:
             return result
 
         if attr.is_dict:
+            raise ValueError("Dict is not supported type for DB")
             return "Dict[str, str]"
 
         if attr.is_nillable or (

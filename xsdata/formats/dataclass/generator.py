@@ -43,6 +43,10 @@ class DataclassGenerator(AbstractGenerator):
         packages = {obj.qname: obj.target_module for obj in classes}
         resolver = DependenciesResolver(packages=packages)
 
+        # inject class list so it can be used to introspect
+        # classes in template filters
+        self.filters.set_classes(classes)
+
         # Generate packages
         for path, cluster in self.group_by_package(classes).items():
             module = ".".join(path.relative_to(Path.cwd()).parts)
@@ -119,6 +123,8 @@ class DataclassGenerator(AbstractGenerator):
 
         def render_class(obj: Class) -> str:
             """Render class or enumeration."""
+            extension_qnames = [o.type.qname for o in obj.extensions]
+            parent_classes = [c for c in classes if c.qname in extension_qnames]
 
             if obj.is_enumeration:
                 template = load("enum.jinja2")
@@ -129,6 +135,7 @@ class DataclassGenerator(AbstractGenerator):
 
             return template.render(
                 obj=obj,
+                parent_classes=parent_classes,
                 module_namespace=module_namespace,
             ).strip()
 
