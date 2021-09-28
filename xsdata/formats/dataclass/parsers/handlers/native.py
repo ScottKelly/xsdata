@@ -60,7 +60,11 @@ class XmlEventHandler(XmlHandler):
         return self.process_context(ctx)
 
     def process_context(self, context: Iterable) -> Any:
-        """Iterate context and push the events to main parser."""
+        """
+        Iterate context and push the events to main parser.
+
+        :param context: Iterator through XML document
+        """
         ns_map: Dict = {}
         for event, element in context:
             if event == EventType.START:

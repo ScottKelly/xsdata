@@ -9,6 +9,8 @@ from typing import Set
 from typing import Tuple
 from typing import Type
 
+from sqlmodel import SQLModel
+
 from xsdata.exceptions import XmlContextError
 from xsdata.formats.dataclass.models.generics import AnyElement
 from xsdata.formats.dataclass.models.generics import DerivedElement
@@ -145,7 +147,19 @@ class Dataclasses(ClassType):
         return choice.get("default")
 
 
+class SQLModels(Dataclasses):
+    def is_model(self, obj: Any) -> bool:
+        return isinstance(obj, SQLModel) or issubclass(obj, SQLModel)
+
+    def verify_model(self, obj: Any):
+        if not self.is_model(obj):
+            raise XmlContextError(f"Type '{obj}' is not a SQLModel.")
+
+    def get_fields(self, obj: Any) -> Tuple[Any, ...]:
+        return obj.schema()
+
 class_types = ClassTypes()
 class_types.register("dataclasses", Dataclasses())
+class_types.register("sqlmodels", SQLModels())
 
 load_entry_points("xsdata.plugins.class_types")
