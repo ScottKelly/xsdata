@@ -123,8 +123,8 @@ class DataclassGenerator(AbstractGenerator):
 
         def render_class(obj: Class) -> str:
             """Render class or enumeration."""
-            extension_qnames = [o.type.qname for o in obj.extensions]
-            parent_classes = [c for c in classes if c.qname in extension_qnames]
+            # extension_qnames = [o.type.qname for o in obj.extensions]
+            # parent_classes = [c for c in classes if c.qname in extension_qnames]
 
             if obj.is_enumeration:
                 template = load("enum.jinja2")
@@ -135,7 +135,7 @@ class DataclassGenerator(AbstractGenerator):
 
             return template.render(
                 obj=obj,
-                parent_classes=parent_classes,
+              #  parent_classes=parent_classes,
                 module_namespace=module_namespace,
             ).strip()
 

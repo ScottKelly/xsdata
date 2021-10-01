@@ -1,7 +1,6 @@
 import math
 import re
 import textwrap
-from enum import Enum
 from typing import Any
 from typing import Callable
 from typing import Dict
@@ -15,6 +14,7 @@ from xml.sax.saxutils import quoteattr
 
 from docformatter import format_code
 from jinja2 import Environment
+#from markupsafe import Markup
 
 from xsdata.codegen.models import Attr, Extension
 from xsdata.codegen.models import AttrType
@@ -169,13 +169,13 @@ class Filters:
     def field_definition(
         self,
         attr: Attr,
-        obj: Class,
+#        obj: Class,
         ns_map: Dict,
         parent_namespace: Optional[str],
         parents: List[str],
     ) -> str:
         """Return the field definition with any extra metadata."""
-        type_names = self.type_names(attr, parents)
+        #type_names = self.type_names(attr, parents)
 
         default_value = self.field_default_value(attr, ns_map)
         metadata = self.field_metadata(attr, parent_namespace, parents)
@@ -190,34 +190,8 @@ class Filters:
 
         if metadata:
             kwargs["metadata"] = metadata
-        if self.has_complex_types(type_names):
-            if len(type_names) > 1:
-                raise ValueError("Multiple types for foreign key is unsupported")
-            type_name = type_names[0]
 
-            if type_name == "object":
-                return f"= Field(sa_column=Column(JSONB))"
-            elif type_name == "bytes":
-                return f"= Field(sa_column=Column(LargeBinary()))"
-            else:
-                attr_class = self._find_class_for_attr(attr)
-                if attr_class.is_enumeration:
-                    return f"= Field(sa_column=Column(DbEnum({type_name})))"
-                else:
-                    if attr.is_tokens:
-                        raise ValueError("No idea how to handle lists of lists")
-
-                    if attr.is_list:
-                        return "= Relationship(back_populates=\"{}\")".format(self.field_case(obj.qname))
-                    else:
-                        if attr_class.fqname not in type_names[0]:
-                            table_name = self.table_name(attr_class.fqname.split("."))
-                        else:
-                            print("going here")
-                            table_name = self.table_name([item for t in type_names for item in t.split(".")])
-
-                        print(table_name)
-                        return f"= Field(foreign_key=\"{table_name}.id\")"
+        return f"field({self.format_arguments(kwargs, 4)})"
 
     def build_relationships(self, obj, classes: List[Class], relationships: List[str]) -> List[str]:
         for clazz in classes:
@@ -255,6 +229,7 @@ class Filters:
             self.build_relationships(obj, clazz.inner, relationships)
         # find all classes that have a list reference to it
         return relationships
+
     def back_populates(self,
         obj: Class,
     ) -> List[str]:
@@ -430,6 +405,7 @@ class Filters:
             "namespace": namespace,
             "mixed": attr.mixed,
             "choices": self.field_choices(attr, parent_namespace, parents),
+           # "sa": self.sql_alchemy_column(attr, parent_namespace, parents),
             **restrictions,
         }
 
@@ -437,6 +413,45 @@ class Filters:
             metadata["doc"] = self.clean_docstring(attr.help, False)
 
         return self.filter_metadata(metadata)
+
+    def sql_alchemy_column(self, attr: Attr, parent_namespace: Optional[str], parents: List[str]) -> str:
+        # TODO attr.restrictions
+        column_fmt = "Column({})"
+        type_names = self.type_names(attr, parents)
+        self.convert_primitive_types(type_names)
+        if self.has_complex_types(type_names):
+            attr_class = self._find_class_for_attr(attr)
+
+            if len(type_names) > 1:
+                raise ValueError("Multiple types for foreign key is unsupported")
+            type_name = type_names[0]
+
+            if type_name == "object":
+                #return Markup(column_fmt.format("JSONB"))
+                return "blah"
+            elif type_name == "bytes":
+                return "blah"
+                #return Markup(column_fmt.format("LargeBinary()"))
+            else:
+                if attr_class.is_enumeration:
+                    return "blah"
+                   # return Markup(column_fmt.format(f"SqlEnum({type_name})"))
+                else:
+                    if attr.is_tokens:
+                        raise ValueError("No idea how to handle lists of lists")
+
+                    if attr.is_list:
+                        return f"relationship({self.class_name(type_name)})"
+                        # return "relationship(back_populates=\"{}\")".format(
+                        #     self.field_case(obj.qname))
+                    else:
+                        if attr_class.qname not in type_names[0]:
+                            table_name = self.table_name(attr_class.qname.split("."))
+                        else:
+                            table_name = self.table_name(
+                                [item for t in type_names for item in t.split(".")])
+                        return "blah"
+                        #return Markup(column_fmt.format(f"ForeignKey(\"{table_name}.id\")"))
 
     def field_choices(
         self, attr: Attr, parent_namespace: Optional[str], parents: List[str]
@@ -561,11 +576,32 @@ class Filters:
         start = indent + 2  # plus quotes
         start += len(key) + pad if key else 0
 
+        # if isinstance(data, Markup):
+        #     value = data
+        # else:
+        #
         value = text.escape_string(data)
         length = len(value) + start
         if length < self.max_line_length or " " not in value:
+            # if isinstance(data, Markup):
+            #     return value
+            # else:
+            #     return f'"{value}"'
             return f'"{value}"'
 
+        # if isinstance(data, Markup):
+        #     next_indent = indent + 4
+        #     value = "\n".join(
+        #         f'{" " * next_indent}{line}'
+        #         for line in textwrap.wrap(
+        #             value,
+        #             width=self.max_line_length - next_indent - 2,  # plus quotes
+        #             drop_whitespace=False,
+        #             replace_whitespace=False,
+        #             break_long_words=True,
+        #         )
+        #     )
+        # else:
         next_indent = indent + 4
         value = "\n".join(
             f'{" " * next_indent}"{line}"'
@@ -762,7 +798,7 @@ class Filters:
             return result
 
         if attr.is_dict:
-            raise ValueError("Dict is not supported type for DB")
+           # raise ValueError("Dict is not supported type for DB")
             return "Dict[str, str]"
 
         if attr.is_nillable or (

@@ -6,8 +6,6 @@ from typing import List
 from typing import Optional
 from typing import Type
 
-from sqlmodel import Session
-
 from xsdata.formats.dataclass.parsers.bases import NodeParser
 from xsdata.formats.dataclass.parsers.bases import Parsed
 from xsdata.formats.dataclass.parsers.handlers import default_handler
@@ -16,6 +14,7 @@ from xsdata.formats.dataclass.parsers.mixins import XmlNode
 from xsdata.models.enums import EventType
 from xsdata.utils.namespaces import local_name
 from xsdata.utils.text import snake_case
+
 
 @dataclass
 class XmlParser(NodeParser):
@@ -96,21 +95,3 @@ class UserXmlParser(NodeParser):
         method = self.emit_cache[key]
         if method:
             method(**kwargs)
-        if event not in self.emit_cache:
-            self.emit_cache[event] = getattr(self, f"{event}_all", None)
-
-        all_method = self.emit_cache[event]
-
-        if all_method:
-            all_method(**kwargs)
-
-
-class SQLModelParser(UserXmlParser):
-
-    session: Session
-
-    def start_all(self, attrs: Dict):
-        pass
-
-    def end_all(self, obj: Parsed):
-        pass

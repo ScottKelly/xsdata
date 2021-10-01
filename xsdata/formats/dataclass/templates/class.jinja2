@@ -11,7 +11,8 @@
 {% set base_classes = obj.extensions|map(attribute='type')|map('type_name')|join(', ') -%}
 {% set target_namespace = obj.target_namespace if level == 0 and module_namespace != obj.target_namespace else None %}
 
-class {{ class_name }}(BaseSQLModel, table=True):
+{{ class_annotation }}
+class {{ class_name }}(BaseSQLModelMixin, {{ "{},".format(base_classes)  if base_classes}} table=True):
 {%- if help %}
 {{ help|indent(4, first=True) }}
 {%- endif -%}
@@ -36,54 +37,11 @@ class {{ class_name }}(BaseSQLModel, table=True):
 {% elif obj.attrs|length == 0 and not help %}
     pass
 {%- endif -%}
-{# SQLModel doesn't support inheritance so add all parent attributes to this class #}
-{%- if parent_classes  %}
-    {% for parent_class in parent_classes %}
-    {%- for attr in parent_class.attrs %}
-   {%- set field_typing = attr|field_type(parents) %}
-    {%- set field_definition = attr|field_definition(obj, obj.ns_map, parent_namespace, parents) %}
-    {%- if field_definition and "foreign_key" in field_definition-%}
-    {{ "\n" }}
-    {{ attr.name|field_name(obj.name) }}_id: int {{field_definition}}
-    {{ attr.name|field_name(obj.name) }}: {{ field_typing }} = Relationship(back_populates="{{ obj.qname | field_name(obj.name) }}")
-    {% elif field_definition and "Relationship" in field_definition %}
-    {% if attr.is_list %}
-    {{ attr.name|field_name(obj.name) }}: {{  field_typing }} {{field_definition}}
-    {% else %}
-    {{ attr.name|field_name(obj.name) }}: {{  field_typing }} {{field_definition}}
-    {% endif %}
-    {%- else -%}
-    {{ "\n" }}
-    {{ attr.name|field_name(obj.name) }}: {{  field_typing }} {{field_definition if field_definition}}
-
-
-    {%- endif  -%}
-    {%- endfor -%}
-    {%- endfor -%}
-{% endif %}
 {%- for attr in obj.attrs %}
     {%- set field_typing = attr|field_type(parents) %}
-    {%- set field_definition = attr|field_definition(obj, obj.ns_map, parent_namespace, parents) %}
-    {%- if field_definition and "foreign_key" in field_definition-%}
-    {{ "\n" }}
-    {{ attr.name|field_name(obj.name) }}_id: int {{field_definition}}
-    {{ attr.name|field_name(obj.name) }}: {{ field_typing }} = Relationship(back_populates="{{ obj.qname | field_name(obj.name) }}")
-    {% elif field_definition and "Relationship" in field_definition %}
-    {% if attr.is_list %}
-    {{ attr.name|field_name(obj.name) }}: {{  field_typing }} {{field_definition}}
-    {% else %}
-    {{ attr.name|field_name(obj.name) }}: {{  field_typing }} {{field_definition}}
-    {% endif %}
-    {%- else -%}
-    {{ "\n" }}
-    {{ attr.name|field_name(obj.name) }}: {{  field_typing }} {{field_definition if field_definition}}
-
-
-    {%- endif  -%}
+    {%- set field_definition = attr|field_definition(obj.ns_map, parent_namespace, parents) %}
+    {{ attr.name|field_name(obj.name) }}: {{ field_typing }} = {{ field_definition }}
 {%- endfor -%}
-{% for back_populates in obj|back_populates  %}
-    {{ back_populates }}
-{% endfor %}
 {%- for inner in obj.inner %}
     {%- set tpl = "enum.jinja2" if inner.is_enumeration else "class.jinja2" -%}
     {%- set inner_parents = parents + [obj.name] + [inner.name] -%}

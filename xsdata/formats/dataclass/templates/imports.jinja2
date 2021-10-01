@@ -1,7 +1,7 @@
 from datetime import datetime
+from sqlalchemy import Column, ForeignKey, Enum as SqlEnum
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlmodel import Relationship, Field, LargeBinary, Column, Enum as DbEnum
-from common.db import BaseSQLModel
+from common.db import BaseSQLModelMixin
 
 {%- for source, items in imports|groupby("source") -%}
 {%- if items|length == 1 -%}
