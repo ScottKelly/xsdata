@@ -14,7 +14,7 @@ from xml.sax.saxutils import quoteattr
 
 from docformatter import format_code
 from jinja2 import Environment
-#from markupsafe import Markup
+from markupsafe import Markup
 
 from xsdata.codegen.models import Attr, Extension
 from xsdata.codegen.models import AttrType
@@ -115,7 +115,8 @@ class Filters:
                 "clean_docstring": self.clean_docstring,
                 "import_module": self.import_module,
                 "import_class": self.import_class,
-                "back_populates": self.back_populates
+                "relationships": self.relationships,
+                "non_relational": self.non_relational
             }
         )
 
@@ -149,13 +150,16 @@ class Filters:
             else:
                 yield self.field_name(name, obj.name), docstring
 
-    def class_name(self, name: str) -> str:
+    def class_name(self, name: str, parents=None) -> str:
         """Convert the given string to a class name according to the selected
         conventions or use an existing alias."""
         alias = self.class_aliases.get(name)
         if alias:
             return alias
-
+        if parents:
+            name = ""
+            for parent in parents:
+                name += self.class_name(parent)
         return self.safe_name(name, self.class_safe_prefix, self.class_case)
 
 
@@ -169,7 +173,6 @@ class Filters:
     def field_definition(
         self,
         attr: Attr,
-#        obj: Class,
         ns_map: Dict,
         parent_namespace: Optional[str],
         parents: List[str],
@@ -193,10 +196,26 @@ class Filters:
 
         return f"field({self.format_arguments(kwargs, 4)})"
 
-    def build_relationships(self, obj, classes: List[Class], relationships: List[str]) -> List[str]:
+    def non_relational(self, attrs: List[Attr]):
+        """
+        Returns a list of attrs with all relational attrs removed.
+        """
+        non_relational_attrs: List[Attr] = []
+        for attr in attrs:
+            attr_types = self.type_names(attr, [])
+            self.convert_primitive_types(attr_types)
+            if not self.has_complex_types(attr_types):
+                non_relational_attrs.append(attr)
+
+        return non_relational_attrs
+
+    def build_backwards_relationships(self, obj, classes: List[Class], relationships: List[str]) -> List[str]:
+        """
+        Finds all other classes that have a relationship to obj recursively and
+        adds a back_populating relationship field
+        """
         for clazz in classes:
             if clazz == obj:
-                print("Continuing")
                 continue
             for ref_attr in clazz.attrs:
                 ref_attr_types = self.type_names(ref_attr, [])
@@ -204,39 +223,83 @@ class Filters:
                 if not self.has_complex_types(ref_attr_types):
                     continue
                 ref_attr_class = self._find_class_for_attr(ref_attr)
-                if ref_attr_class.qname == obj.qname:
+                obj_fqname = self.fqname(obj)
+                ref_attr_fqname = self.fqname(ref_attr_class)
+                if ref_attr_fqname == obj_fqname:
                     if ref_attr.is_list:
-                        full_class_name = clazz.fqname if clazz.fqname else clazz.qname
+                        full_class_name = self.fqname(clazz)
                         table_name = self.table_name(full_class_name.split("."))
                         print(f"Class {full_class_name} has reference to {obj.qname}")
-                        relationships.append("{}_id: int = Field(foreign_key=\"{}.id\")".format(self.field_case(clazz.qname), table_name))
-                        relationships.append("{}: \"{}\" = Relationship(back_populates=\"{}\")".format(
-                            self.field_case(clazz.qname),
-                            self.class_name(full_class_name),
-                            self.field_case(ref_attr.name)
+                        relationships.append('{}_id: int = field(default=None, metadata={{"sa": Column(ForeignKey(\"{}.id\"))}})'.format(self.field_case(clazz.qname), table_name))
+                        relationships.append("{qname}: \"{fqname}\" = relationship(\"{fqname}\", foreign_keys=[{qname}_id.metadata[\"sa\"]], back_populates=\"{attr_name}\")".format(
+                            qname=self.field_case(clazz.qname),
+                            fqname=self.class_name(full_class_name),
+                            attr_name=self.field_case(ref_attr.name)
                         ))
                     else:
-                        full_class_name = clazz.fqname if clazz.fqname else clazz.qname
+                        pass
+                        # full_class_name = self.fqname(clazz)
                         #table_name = self.table_name(full_class_name.split("."))
                         #print(f"Class {full_class_name} has reference to {obj.qname}")
                         #relationships.append("{}_id: int = Field(foreign_key=\"{}.id\")".format(self.field_case(clazz.qname), table_name))
-                        relationships.append("{}: \"{}\" = Relationship(back_populates=\"{}\")".format(
-                            self.field_case(clazz.qname),
-                            self.class_name(full_class_name),
-                            self.field_case(ref_attr.name)
-                        ))
+                        # relationships.append("{qname}: \"{fqname}\" = relationship(\"{fqname}\", back_populates=\"{attr_name}\")".format(
+                        #     qname=self.field_case(clazz.qname),
+                        #     fqname=self.class_name(full_class_name),
+                        #     attr_name=self.field_case(ref_attr.name)
+                        # ))
             # TODO this might not be required if the class_list has all of the classes in it
-            self.build_relationships(obj, clazz.inner, relationships)
+            self.build_backwards_relationships(obj, clazz.inner, relationships)
         # find all classes that have a list reference to it
         return relationships
 
-    def back_populates(self,
+    def build_relationships(self, obj: Class, relationships: List[str]) -> None:
+        for attr in obj.attrs:
+            attr_types = self.type_names(attr, [])
+            self.convert_primitive_types(attr_types)
+            if not self.has_complex_types(attr_types):
+                continue
+            attr_class = self._find_class_for_attr(attr)
+            if attr.is_list:
+                # list attributes are already handled by the normal field population
+                pass
+            else:
+                full_class_name = self.fqname(attr_class)
+                table_name = self.table_name(full_class_name.split("."))
+                relationships.append(
+                    '{}_id: int = field(default=None, metadata={{"sa": Column(ForeignKey(\"{}.id\"))}})'.format(
+                        self.field_case(attr.name), table_name))
+                # relationships.append(
+                #     "{name}: \"{fqname}\" = relationship(\"{fqname}\", back_populates=\"{attr_name}\")".format(
+                #         name=self.field_case(attr.name),
+                #         fqname=self.class_name(full_class_name),
+                #         attr_name=self.field_case(obj.qname)
+                #     ))
+    def relationships(self,
         obj: Class,
     ) -> List[str]:
         relationships = []
-        self.build_relationships(obj, self.classes, relationships)
+        self.build_relationships(obj, relationships)
+        self.build_backwards_relationships(obj, self.classes, relationships)
         # find all classes that have a list reference to it
         return relationships
+
+    def _fqname_recursive(self, obj: Class, class_list: List[Class]) -> str:
+        for clazz in class_list:
+            if clazz.qname == obj.qname:
+                return obj.qname
+            elif clazz.inner:
+                inner_clazz_result = self._fqname_recursive(obj, clazz.inner)
+                if inner_clazz_result:
+                    return clazz.qname + "." + inner_clazz_result
+
+    _fqname_map: Dict[int, str] = {}
+
+    def fqname(self, obj: Class) -> str:
+        obj_id = id(obj)
+        if obj_id not in self._fqname_map:
+            print(f"Caching {obj_id}")
+            self._fqname_map[obj_id] = self._fqname_recursive(obj, self.classes)
+        return self._fqname_map[obj_id]
 
 
 
@@ -405,7 +468,7 @@ class Filters:
             "namespace": namespace,
             "mixed": attr.mixed,
             "choices": self.field_choices(attr, parent_namespace, parents),
-           # "sa": self.sql_alchemy_column(attr, parent_namespace, parents),
+            "sa": self.sql_alchemy_column(attr, parent_namespace, parents),
             **restrictions,
         }
 
@@ -419,40 +482,47 @@ class Filters:
         column_fmt = "Column({})"
         type_names = self.type_names(attr, parents)
         self.convert_primitive_types(type_names)
-        if self.has_complex_types(type_names):
+        type_name = type_names[0]
+
+        if len(type_names) > 1:
+            raise ValueError("Multiple types for foreign key is unsupported")
+        if type_name == "dict":
+            return Markup(column_fmt.format("JSONB"))
+        elif type_name == "bytes":
+            return Markup(column_fmt.format("LargeBinary()"))
+        elif type_name == "datetime":
+            return Markup(column_fmt.format("DateTime"))
+        elif type_name == "bool":
+            return Markup(column_fmt.format("Boolean"))
+        elif type_name == "int":
+            return Markup(column_fmt.format("Integer"))
+        elif type_name == "Decimal":
+            return Markup(column_fmt.format("Numeric"))
+        elif type_name == "str":
+            return Markup(column_fmt.format("String"))
+        elif self.has_complex_types(type_names):
             attr_class = self._find_class_for_attr(attr)
-
-            if len(type_names) > 1:
-                raise ValueError("Multiple types for foreign key is unsupported")
-            type_name = type_names[0]
-
-            if type_name == "object":
-                #return Markup(column_fmt.format("JSONB"))
-                return "blah"
-            elif type_name == "bytes":
-                return "blah"
-                #return Markup(column_fmt.format("LargeBinary()"))
+            if attr_class.is_enumeration:
+                return Markup(column_fmt.format(f"SqlEnum({type_name})"))
             else:
-                if attr_class.is_enumeration:
-                    return "blah"
-                   # return Markup(column_fmt.format(f"SqlEnum({type_name})"))
+                if attr.is_tokens:
+                    raise ValueError("No idea how to handle lists of lists")
+
+                if attr.is_list:
+                    return Markup(f"relationship({self.class_name(type_name)})")
+                    # return "relationship(back_populates=\"{}\")".format(
+                    #     self.field_case(obj.qname))
                 else:
-                    if attr.is_tokens:
-                        raise ValueError("No idea how to handle lists of lists")
-
-                    if attr.is_list:
-                        return f"relationship({self.class_name(type_name)})"
-                        # return "relationship(back_populates=\"{}\")".format(
-                        #     self.field_case(obj.qname))
-                    else:
-                        if attr_class.qname not in type_names[0]:
-                            table_name = self.table_name(attr_class.qname.split("."))
-                        else:
-                            table_name = self.table_name(
-                                [item for t in type_names for item in t.split(".")])
-                        return "blah"
-                        #return Markup(column_fmt.format(f"ForeignKey(\"{table_name}.id\")"))
-
+                    # handled in the relationships function
+                    return Markup(f"relationship({self.class_name(type_name)}, foreign_keys=[{self.field_name(attr.name, parent_namespace)}_id.metadata[\"sa\"]])")
+                    # if attr_class.qname not in type_names[0]:
+                    #     table_name = self.table_name(type_names[0].split("."))
+                    # else:
+                    #     table_name = self.table_name(
+                    #         [item for t in type_names for item in t.split(".")])
+                    # return Markup(column_fmt.format(f"ForeignKey(\"{table_name}.id\")"))
+        else:
+            raise ValueError(f"Could not find matching SQL Type for XML Type(s): {type_names}")
     def field_choices(
         self, attr: Attr, parent_namespace: Optional[str], parents: List[str]
     ) -> Optional[Tuple]:
@@ -568,52 +638,52 @@ class Filters:
             return data
 
         if key == "pattern":
-            return f'r"{data}"'
-
+            value = re.sub(r'([^\\])\"', r'\1\\"', data)
+            return f'r"{value}"'
+            # return f'r"{data}"'
         if data == "":
             return '""'
 
         start = indent + 2  # plus quotes
         start += len(key) + pad if key else 0
 
-        # if isinstance(data, Markup):
-        #     value = data
-        # else:
-        #
-        value = text.escape_string(data)
+        if isinstance(data, Markup):
+            value = data
+        else:
+            value = text.escape_string(data)
         length = len(value) + start
         if length < self.max_line_length or " " not in value:
-            # if isinstance(data, Markup):
-            #     return value
-            # else:
-            #     return f'"{value}"'
-            return f'"{value}"'
+            if isinstance(data, Markup):
+                return value
+            else:
+                return f'"{value}"'
 
-        # if isinstance(data, Markup):
-        #     next_indent = indent + 4
-        #     value = "\n".join(
-        #         f'{" " * next_indent}{line}'
-        #         for line in textwrap.wrap(
-        #             value,
-        #             width=self.max_line_length - next_indent - 2,  # plus quotes
-        #             drop_whitespace=False,
-        #             replace_whitespace=False,
-        #             break_long_words=True,
-        #         )
-        #     )
-        # else:
-        next_indent = indent + 4
-        value = "\n".join(
-            f'{" " * next_indent}"{line}"'
-            for line in textwrap.wrap(
-                value,
-                width=self.max_line_length - next_indent - 2,  # plus quotes
-                drop_whitespace=False,
-                replace_whitespace=False,
-                break_long_words=True,
+        if isinstance(data, Markup):
+            next_indent = indent + 4
+            value = "\n".join(
+                f'{" " * next_indent}{line}'
+                for line in textwrap.wrap(
+                    value,
+                    width=self.max_line_length - next_indent - 2,  # plus quotes
+                    drop_whitespace=False,
+                    replace_whitespace=False,
+                    break_long_words=True,
+                )
             )
-        )
-        return f"(\n{value}\n{' ' * indent})"
+            return value
+        else:
+            next_indent = indent + 4
+            value = "\n".join(
+                f'{" " * next_indent}"{line}"'
+                for line in textwrap.wrap(
+                    value,
+                    width=self.max_line_length - next_indent - 2,  # plus quotes
+                    drop_whitespace=False,
+                    replace_whitespace=False,
+                    break_long_words=True,
+                )
+            )
+            return f"(\n{value}\n{' ' * indent})"
 
     def text_wrap(self, string: str, offset: int = 0) -> str:
         """Wrap text in respect to the max line length and the given offset."""
@@ -798,8 +868,8 @@ class Filters:
             return result
 
         if attr.is_dict:
-           # raise ValueError("Dict is not supported type for DB")
-            return "Dict[str, str]"
+           raise ValueError("Dict is not supported type for DB")
+           # return "Dict[str, str]"
 
         if attr.is_nillable or (
             attr.default is None and (attr.is_optional or not self.format.kw_only)

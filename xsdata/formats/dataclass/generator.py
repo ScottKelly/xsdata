@@ -120,7 +120,7 @@ class DataclassGenerator(AbstractGenerator):
     ) -> str:
         """Render the source code of the classes."""
         load = self.env.get_template
-
+        self.filters.classes = classes
         def render_class(obj: Class) -> str:
             """Render class or enumeration."""
             # extension_qnames = [o.type.qname for o in obj.extensions]
