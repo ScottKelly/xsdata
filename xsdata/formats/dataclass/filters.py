@@ -504,26 +504,28 @@ class Filters:
     def sql_alchemy_column(self, name: str, attr: Attr, parent_namespace: Optional[str], parents: List[str]) -> str:
         # TODO attr.restrictions
         column_fmt = "Column({})"
+
         type_names = self.type_names(attr, parents)
         self.convert_primitive_types(type_names)
         type_name = type_names[0]
 
+        postgres_datatype: Optional[str] = None
         if len(type_names) > 1:
-            raise ValueError("Multiple types for foreign key is unsupported")
+            raise ValueError("Multiple value types for DB storage is unsupported")
         if type_name in ("dict", "object"):
-            return Markup(column_fmt.format("JSONB"))
+            postgres_datatype = "JSONB"
         elif type_name == "bytes":
-            return Markup(column_fmt.format("LargeBinary()"))
+            postgres_datatype= "LargeBinary()"
         elif type_name == "datetime":
-            return Markup(column_fmt.format("DateTime"))
+            postgres_datatype = "DateTime"
         elif type_name == "bool":
-            return Markup(column_fmt.format("Boolean"))
+            postgres_datatype = "Boolean"
         elif type_name == "int":
-            return Markup(column_fmt.format("Integer"))
+            postgres_datatype = "Integer"
         elif type_name == "Decimal":
-            return Markup(column_fmt.format("Numeric"))
+            postgres_datatype = "Numeric"
         elif type_name == "str":
-            return Markup(column_fmt.format("String"))
+            postgres_datatype= "String"
         elif self.has_complex_types(type_names):
             attr_class = self.find_class_by_qname(attr.types[0].qname, parents)
             if attr_class.is_enumeration:
@@ -555,6 +557,14 @@ class Filters:
                     # return Markup(column_fmt.format(f"ForeignKey(\"{table_name}.id\")"))
         else:
             raise ValueError(f"Could not find matching SQL Type for XML Type(s): {type_names}")
+
+        if not self.has_complex_types(type_names):
+            # use postgresql arrays for lists of primitive types
+            if attr.is_list:
+                return Markup(column_fmt.format(f"ARRAY({postgres_datatype})"))
+            else:
+                return Markup(column_fmt.format(postgres_datatype))
+
     def field_choices(
         self, attr: Attr, parent_namespace: Optional[str], parents: List[str]
     ) -> Optional[Tuple]:
