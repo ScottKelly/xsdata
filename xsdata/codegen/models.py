@@ -435,6 +435,7 @@ class Class:
     qname: str
     tag: str
     location: str
+    fqname: str = field(default=False, init=False)
     mixed: bool = field(default=False)
     abstract: bool = field(default=False)
     nillable: bool = field(default=False)

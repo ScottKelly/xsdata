@@ -116,7 +116,8 @@ class Filters:
                 "import_module": self.import_module,
                 "import_class": self.import_class,
                 "relationships": self.relationships,
-                "non_relational": self.non_relational
+                "non_relational": self.non_relational,
+                "extension_attrs": self.extension_attrs
             }
         )
 
@@ -164,11 +165,17 @@ class Filters:
 
 
     def get_class_for_extension(self, extension: Extension) -> Class:
-        matching_classes = list(filter(lambda x: x.qname == extension.type.qname, self.classes))
-        if len(matching_classes) > 1:
-            raise ValueError(f"Too many matching classes for Extension {extension.type.qname}")
+        if self.is_complex_type(self.type_name(extension.type)):
+            return self.find_class_by_qname(extension.type.qname, [])
 
-        return matching_classes[0]
+
+    def extension_attrs(self, extensions: List[Extension]) -> List[Attr]:
+        attrs = []
+        for extension in extensions:
+            clazz = self.get_class_for_extension(extension)
+            attrs += clazz.attrs
+
+        return attrs
 
     def field_definition(
         self,
@@ -209,7 +216,7 @@ class Filters:
 
         return non_relational_attrs
 
-    def build_backwards_relationships(self, obj, classes: List[Class], relationships: List[str]) -> List[str]:
+    def build_backwards_relationships(self, obj, classes: List[Class], relationships: List[str], parents: List[str]) -> List[str]:
         """
         Finds all other classes that have a relationship to obj recursively and
         adds a back_populating relationship field
@@ -222,16 +229,16 @@ class Filters:
                 self.convert_primitive_types(ref_attr_types)
                 if not self.has_complex_types(ref_attr_types):
                     continue
-                ref_attr_class = self._find_class_for_attr(ref_attr)
-                obj_fqname = self.fqname(obj)
-                ref_attr_fqname = self.fqname(ref_attr_class)
+
+                ref_attr_class = self.find_class_by_qname(ref_attr.types[0].qname, [clazz.qname])
+                obj_fqname = obj.fqname if obj.fqname else self.fqname(obj)
+                ref_attr_fqname = ref_attr_class.fqname
                 if ref_attr_fqname == obj_fqname:
                     if ref_attr.is_list:
-                        full_class_name = self.fqname(clazz)
+                        full_class_name = clazz.fqname if clazz.fqname else self.fqname(clazz)
                         table_name = self.table_name(full_class_name.split("."))
-                        print(f"Class {full_class_name} has reference to {obj.qname}")
-                        relationships.append('{}_id: int = field(default=None, metadata={{"sa": Column(ForeignKey(\"{}.id\"))}})'.format(self.field_case(clazz.qname), table_name))
-                        relationships.append("{qname}: \"{fqname}\" = relationship(\"{fqname}\", foreign_keys=[{qname}_id.metadata[\"sa\"]], back_populates=\"{attr_name}\")".format(
+                        relationships.append('{}_id: int = field(default=None, metadata={{"sa": Column(ForeignKey(\"{}.id\", use_alter=True))}})'.format(self.field_case(clazz.qname), table_name))
+                        relationships.append("{qname}: Optional[\"{fqname}\"] = field(default=None, metadata={{\"sa\": relationship(\"{fqname}\", foreign_keys=[{qname}_id.metadata[\"sa\"]], back_populates=\"{attr_name}\")}})".format(
                             qname=self.field_case(clazz.qname),
                             fqname=self.class_name(full_class_name),
                             attr_name=self.field_case(ref_attr.name)
@@ -240,7 +247,6 @@ class Filters:
                         pass
                         # full_class_name = self.fqname(clazz)
                         #table_name = self.table_name(full_class_name.split("."))
-                        #print(f"Class {full_class_name} has reference to {obj.qname}")
                         #relationships.append("{}_id: int = Field(foreign_key=\"{}.id\")".format(self.field_case(clazz.qname), table_name))
                         # relationships.append("{qname}: \"{fqname}\" = relationship(\"{fqname}\", back_populates=\"{attr_name}\")".format(
                         #     qname=self.field_case(clazz.qname),
@@ -248,25 +254,25 @@ class Filters:
                         #     attr_name=self.field_case(ref_attr.name)
                         # ))
             # TODO this might not be required if the class_list has all of the classes in it
-            self.build_backwards_relationships(obj, clazz.inner, relationships)
+            self.build_backwards_relationships(obj, clazz.inner, relationships, parents)
         # find all classes that have a list reference to it
         return relationships
 
-    def build_relationships(self, obj: Class, relationships: List[str]) -> None:
+    def build_relationships(self, obj: Class, relationships: List[str], parents: List[str]) -> None:
         for attr in obj.attrs:
             attr_types = self.type_names(attr, [])
             self.convert_primitive_types(attr_types)
             if not self.has_complex_types(attr_types):
                 continue
-            attr_class = self._find_class_for_attr(attr)
-            if attr.is_list:
+            attr_class = self.find_class_by_qname(attr.types[0].qname, parents)
+            if attr.is_list or attr_class.is_enumeration or attr.is_enumeration:
                 # list attributes are already handled by the normal field population
-                pass
+                continue
             else:
-                full_class_name = self.fqname(attr_class)
+                full_class_name = attr_class.fqname if attr_class.fqname else self.fqname(attr_class)
                 table_name = self.table_name(full_class_name.split("."))
                 relationships.append(
-                    '{}_id: int = field(default=None, metadata={{"sa": Column(ForeignKey(\"{}.id\"))}})'.format(
+                    '{}_id: int = field(default=None, metadata={{"sa": Column(ForeignKey(\"{}.id\", use_alter=True))}})'.format(
                         self.field_case(attr.name), table_name))
                 # relationships.append(
                 #     "{name}: \"{fqname}\" = relationship(\"{fqname}\", back_populates=\"{attr_name}\")".format(
@@ -274,12 +280,15 @@ class Filters:
                 #         fqname=self.class_name(full_class_name),
                 #         attr_name=self.field_case(obj.qname)
                 #     ))
+
+
     def relationships(self,
         obj: Class,
+        parents: List[str]
     ) -> List[str]:
         relationships = []
-        self.build_relationships(obj, relationships)
-        self.build_backwards_relationships(obj, self.classes, relationships)
+        self.build_relationships(obj, relationships, parents)
+        self.build_backwards_relationships(obj, self.classes, relationships, parents)
         # find all classes that have a list reference to it
         return relationships
 
@@ -297,33 +306,42 @@ class Filters:
     def fqname(self, obj: Class) -> str:
         obj_id = id(obj)
         if obj_id not in self._fqname_map:
-            print(f"Caching {obj_id}")
             self._fqname_map[obj_id] = self._fqname_recursive(obj, self.classes)
         return self._fqname_map[obj_id]
 
 
 
-    def _compare_class(self, hierachy: str, clazz: Class, qname) -> Class:
+    def _compare_class(self, hierachy: str, clazz: Class, qname: str) -> Class:
         if hierachy:
             hierachy += "." + self.class_name(clazz.qname)
         else:
             hierachy = self.class_name(clazz.qname)
-        if clazz.qname == qname:
+        if hierachy.split(".")[-1] == self.class_name(qname):
             clazz.fqname = hierachy
             return clazz
         for inner_clazz in clazz.inner:
-            #print(clazz.qname + "." + inner_clazz.qname)
             match = self._compare_class(hierachy, inner_clazz, qname)
             if match:
                 return match
+            else:
+                self._compare_class(hierachy, inner_clazz, qname.split(".")[-1])
+                if match:
+                    return match
 
-    def _find_class_for_attr(self, attr) -> Class:
+    def find_class_by_qname(self, qname: str, parents: List[str]) -> Class:
+        # first find the class for the parents and prefer to grab the class from a
+        # defined inner class
         for clazz in self.classes:
-            #print(clazz.qname)
-            match = self._compare_class("", clazz, attr.types[0].qname)
+            if clazz.qname in parents:
+                match = self._compare_class("", clazz, qname)
+                if match:
+                    return match
+        # else, try to find any matching class for the attr
+        for clazz in self.classes:
+            match = self._compare_class("", clazz, qname)
             if match:
                 return match
-        raise ValueError(attr.types[0])
+        raise ValueError(f"Can't find class for qname {qname}")
 
     def table_name(self, parents: List[str]):
         """
@@ -333,7 +351,13 @@ class Filters:
 
         # do double underscore to avoid situations where Alembic
         # may generate conflicting index names
-        return "__".join([self.field_case(parent) for parent in parents])
+        table_name = "__".join([self.field_case(parent) for parent in parents])
+
+        # max identifier in postgres is 63 characters
+        while len(table_name) > 63:
+            table_name = table_name.split("__", 1)[-1]
+
+        return table_name
 
     def field_name(self, name: str, class_name: str) -> str:
         """
@@ -468,7 +492,7 @@ class Filters:
             "namespace": namespace,
             "mixed": attr.mixed,
             "choices": self.field_choices(attr, parent_namespace, parents),
-            "sa": self.sql_alchemy_column(attr, parent_namespace, parents),
+            "sa": self.sql_alchemy_column(name, attr, parent_namespace, parents),
             **restrictions,
         }
 
@@ -477,7 +501,7 @@ class Filters:
 
         return self.filter_metadata(metadata)
 
-    def sql_alchemy_column(self, attr: Attr, parent_namespace: Optional[str], parents: List[str]) -> str:
+    def sql_alchemy_column(self, name: str, attr: Attr, parent_namespace: Optional[str], parents: List[str]) -> str:
         # TODO attr.restrictions
         column_fmt = "Column({})"
         type_names = self.type_names(attr, parents)
@@ -486,7 +510,7 @@ class Filters:
 
         if len(type_names) > 1:
             raise ValueError("Multiple types for foreign key is unsupported")
-        if type_name == "dict":
+        if type_name in ("dict", "object"):
             return Markup(column_fmt.format("JSONB"))
         elif type_name == "bytes":
             return Markup(column_fmt.format("LargeBinary()"))
@@ -501,15 +525,23 @@ class Filters:
         elif type_name == "str":
             return Markup(column_fmt.format("String"))
         elif self.has_complex_types(type_names):
-            attr_class = self._find_class_for_attr(attr)
+            attr_class = self.find_class_by_qname(attr.types[0].qname, parents)
             if attr_class.is_enumeration:
-                return Markup(column_fmt.format(f"SqlEnum({type_name})"))
+                return Markup(column_fmt.format(f"SqlEnum({type_name}, name=\"{'_'.join([type_name]+parents)}\")"))
             else:
                 if attr.is_tokens:
                     raise ValueError("No idea how to handle lists of lists")
 
                 if attr.is_list:
-                    return Markup(f"relationship({self.class_name(type_name)})")
+                    if name == "trKioskOrder":
+                        # strange special case where these two models have multiple foreign keys
+                        # going to each other and SQL alchemy can't automatically
+                        # figure out the primary join
+                        return Markup(f"relationship({self.class_name(type_name)}, primaryjoin='TrHeaderType.id==TrTickNum.tr_header_type_id')")
+                    elif name == "trRecall":
+                        return Markup(f"relationship({self.class_name(type_name)}, primaryjoin=\"TrRecall.tr_header_type_id==TrHeaderType.id\")")
+                    else:
+                        return Markup(f"relationship({self.class_name(type_name)})")
                     # return "relationship(back_populates=\"{}\")".format(
                     #     self.field_case(obj.qname))
                 else:
@@ -659,17 +691,6 @@ class Filters:
                 return f'"{value}"'
 
         if isinstance(data, Markup):
-            next_indent = indent + 4
-            value = "\n".join(
-                f'{" " * next_indent}{line}'
-                for line in textwrap.wrap(
-                    value,
-                    width=self.max_line_length - next_indent - 2,  # plus quotes
-                    drop_whitespace=False,
-                    replace_whitespace=False,
-                    break_long_words=True,
-                )
-            )
             return value
         else:
             next_indent = indent + 4
@@ -811,11 +832,11 @@ class Filters:
         return f"lambda: {self.format_metadata(tokens, indent=8)}"
 
     def is_complex_type(self, type_name: str) -> bool:
-         return type_name not in ['bool', "int", "Decimal", "str", "dict",
+         return type_name not in ['bool', "int", "Decimal", "str", "dict", "object",
                                                  "float", "datetime", "XmlDateTime", "bytes"]
 
     def has_complex_types(self, type_names: List[str]):
-        return bool(set(type_names) - {'bool', "int", "Decimal", "str", "dict",
+        return bool(set(type_names) - {'bool', "int", "Decimal", "str", "dict", "object",
                                              "float", "datetime", "XmlDateTime", "bytes"})
 
     def type_names(self, attr: Attr, parents: List[str]) -> List[str]:
@@ -831,9 +852,6 @@ class Filters:
         for idx, type_name in enumerate(type_names):
             if type_name == "XmlDateTime":
                 type_names[idx] = "datetime"
-            # convert "object" types to str since SQL doesn't have an object type
-            elif type_name == "object":
-                type_names[idx] = "dict"
 
     def field_type(self, attr: Attr, parents: List[str]) -> str:
         """Generate type hints for the given attribute."""
@@ -850,11 +868,10 @@ class Filters:
         elif self.has_complex_types(type_names):
             # don't use parents here because two different classes could
             # reference the same type
-            attr_class = self._find_class_for_attr(attr)
-            if attr_class.fqname not in type_names[0]:
-                print(type_names[0])
-                print(attr_class.fqname)
-                result = attr_class.fqname
+            attr_class = self.find_class_by_qname(attr.types[0].qname, parents)
+            fqname = attr_class.fqname
+            if fqname not in type_names[0]:
+                result = fqname
 
         iterable = "Tuple[{}, ...]" if self.format.frozen else "List[{}]"
 
