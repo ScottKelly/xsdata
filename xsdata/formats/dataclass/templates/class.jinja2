@@ -33,7 +33,7 @@ class {{ class_name }}{{ "({})".format(base_classes) if base_classes }}:
     __sa_dataclass_metadata_key__ = "sa"
     __mapper_args__ = {
         'polymorphic_identity': '{{ class_name }}',
-        {{ "'polymorphic_on': 'type'" if not base_classes }}
+        {{ "'polymorphic_on': 'entity_type'" if not base_classes }}
     }
 
 
@@ -57,11 +57,12 @@ class {{ class_name }}{{ "({})".format(base_classes) if base_classes }}:
     id: int = field(init=False, metadata=dict(sa=Column(Integer, primary_key=True)))
     """Auto-incrementing primary key."""
 
-    created_timestamp: Optional[datetime] = field(init=False, metadata=dict(sa=Column(DateTime(timezone=True), default=func.now()))),
-    """Time when object was created. Stored in DB as UTC"""
 
     {% if not base_classes %}
-    type: str = field(init=False, metadata={"sa": Column(String(75))})
+    created_timestamp: Optional[datetime] = field(init=False, metadata=dict(sa=Column(DateTime(timezone=True), default=func.now())))
+    """Time when object was created. Stored in DB as UTC"""
+
+    entity_type: str = field(init=False, metadata={"sa": Column(String(75))})
     """SQLAlchemy polymorphic discrimator"""
     {% endif %}
     # inherited attributes

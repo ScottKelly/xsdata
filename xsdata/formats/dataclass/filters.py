@@ -517,7 +517,7 @@ class Filters:
         elif type_name == "bytes":
             postgres_datatype= "LargeBinary()"
         elif type_name == "datetime":
-            postgres_datatype = "DateTime"
+            postgres_datatype = "SqlXmlDateTime"
         elif type_name == "bool":
             postgres_datatype = "Boolean"
         elif type_name == "int":
