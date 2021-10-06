@@ -516,7 +516,7 @@ class Filters:
             postgres_datatype = "JSONB"
         elif type_name == "bytes":
             postgres_datatype= "LargeBinary()"
-        elif type_name == "datetime":
+        elif type_name == "datetime" or type_name == "XmlDateTime":
             postgres_datatype = "SqlXmlDateTime"
         elif type_name == "bool":
             postgres_datatype = "Boolean"
@@ -859,9 +859,10 @@ class Filters:
         Converts certain types that Xsdata sets to the matching type in
         Python
         """
-        for idx, type_name in enumerate(type_names):
-            if type_name == "XmlDateTime":
-                type_names[idx] = "datetime"
+        pass
+        # for idx, type_name in enumerate(type_names):
+        #     if type_name == "XmlDateTime":
+        #         type_names[idx] = "datetime"
 
     def field_type(self, attr: Attr, parents: List[str]) -> str:
         """Generate type hints for the given attribute."""

@@ -59,7 +59,7 @@ class {{ class_name }}{{ "({})".format(base_classes) if base_classes }}:
 
 
     {% if not base_classes %}
-    created_timestamp: Optional[datetime] = field(init=False, metadata=dict(sa=Column(DateTime(timezone=True), default=func.now())))
+    created_timestamp: Optional[XmlDateTime] = field(init=False, metadata=dict(sa=Column(SqlXmlDateTime(timezone=True), default=func.now())))
     """Time when object was created. Stored in DB as UTC"""
 
     entity_type: str = field(init=False, metadata={"sa": Column(String(75))})
