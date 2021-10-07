@@ -147,5 +147,4 @@ class Dataclasses(ClassType):
 
 class_types = ClassTypes()
 class_types.register("dataclasses", Dataclasses())
-
 load_entry_points("xsdata.plugins.class_types")

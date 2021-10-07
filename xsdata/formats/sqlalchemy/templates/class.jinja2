@@ -1,0 +1,101 @@
+{% set level = level|default(0) -%}
+{% set help | format_docstring(level + 1) %}
+    {%- include "docstrings." + docstring_name + ".jinja2" -%}
+{% endset -%}
+{% set parent_namespace = obj.namespace if obj.namespace is not none else parent_namespace|default(None) -%}
+{% set parents = parents|default([obj.name]) -%}
+{% set class_name =  obj.name|class_name(parents) -%}
+{% set table_name = parents|table_name %}
+{% set local_name =  obj.meta_name or obj.name -%}
+{% set local_name = None if class_name == local_name or parents|length != 1 else local_name -%}
+{% set base_classes = obj.extensions|map(attribute='type')|map('type_name')|join(', ') -%}
+{% set target_namespace = obj.target_namespace if level == 0 and module_namespace != obj.target_namespace else None %}
+
+{%- for inner in obj.inner %}
+    {%- set tpl = "enum.jinja2" if inner.is_enumeration else "class.jinja2" -%}
+    {%- set inner_parents = parents + [inner.name] -%}
+        {%- with obj=inner, parents=inner_parents -%}
+            {% include tpl %}
+        {%- endwith -%}
+{%- endfor -%}
+
+{{ "\n" }}
+
+@mapper_registry.mapped
+{{ class_annotation }}
+class {{ class_name }}{{ "({})".format(base_classes) if base_classes }}:
+{%- if help %}
+{{ help|indent(4, first=True) }}
+{%- endif -%}
+
+    {{ "\n" }}
+    __tablename__ = "{{ table_name }}"
+    __sa_dataclass_metadata_key__ = "sa"
+    __mapper_args__ = {
+        'polymorphic_identity': '{{ class_name }}',
+        {{ "'polymorphic_on': 'entity_type'" if not base_classes }}
+    }
+
+
+{%- if local_name or obj.is_nillable or obj.namespace is not none or target_namespace %}
+    class Meta:
+        {%- if local_name %}
+        name = "{{ local_name }}"
+        {%- endif -%}
+        {%- if obj.is_nillable %}
+        nillable = True
+        {%- endif -%}
+        {%- if obj.namespace is not none %}
+        namespace = "{{ obj.namespace }}"
+        {%- endif %}
+        {%- if target_namespace and target_namespace != obj.namespace %}
+        target_namespace = "{{ target_namespace }}"
+        {%- endif %}
+{%- endif -%}
+
+    {{ "\n" }}
+    id: int = field(init=False, metadata=dict(sa=Column(Integer, primary_key=True)))
+    """Auto-incrementing primary key."""
+
+
+    {% if not base_classes %}
+    created_timestamp: Optional[XmlDateTime] = field(init=False, metadata=dict(sa=Column(SqlXmlDateTime(timezone=True), default=func.now())))
+    """Time when object was created. Stored in DB as UTC"""
+
+    entity_type: str = field(init=False, metadata={"sa": Column(String(75))})
+    """SQLAlchemy polymorphic discrimator"""
+    {% endif %}
+    # inherited attributes
+    # {{ base_classes }}
+    {% if base_classes %}
+    {% for base_class in base_classes.split(",") %}
+    {{ base_class|field_name(obj.name) }}_id: int = field(init=False, metadata={"sa": Column(ForeignKey("{{ [base_class]|table_name }}.id", use_alter=True))})
+    {% endfor %}
+    {% endif %}
+    # relationships
+{%- for relationship in obj|relationship_backrefs(parents) %}
+{#    {{ relationship | relationship_name }}: {{ relationship|relationship_type }} = {{ relationship|relationship_definition }}#}
+    {{ relationship }}
+{% endfor -%}
+
+{#{% for attr in obj.extensions|extension_attrs %}#}
+{#    {%- set field_typing = attr|field_type(parents) %}#}
+{#    {%- set field_definition = attr|field_definition(obj.ns_map, parent_namespace, parents) %}#}
+{#    {{ attr.name|field_name(obj.name) }}: {{ field_typing }} = {{ field_definition }}#}
+{#{% endfor%}#}
+    # class attributes
+{%- for attr in obj.attrs %}
+    {%- set field_typing = attr|field_type(parents) %}
+    {%- set field_definition = attr|field_definition(obj.ns_map, parent_namespace, parents) %}
+    {% if attr|is_many_to_one(parents) %}
+    {{ attr.name|field_name(obj.name) }}_id: int = {{ attr|relationship_definition(obj.ns_map, parent_namespace, parents) }}
+    {% endif %}
+    {{ attr.name|field_name(obj.name) }}: {{ field_typing }} = {{ field_definition }}
+{%- endfor -%}
+    # inner classes
+{% for inner in obj.inner %}
+    {% set inner_parents = parents + [inner.name] %}
+    {% set inner_class_name = inner.name | class_name() %}
+    {{ inner_class_name }} = {{ inner.name | class_name(inner_parents) }}
+{% endfor %}
+
