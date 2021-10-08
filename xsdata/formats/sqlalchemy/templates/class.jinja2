@@ -17,11 +17,10 @@
         {%- with obj=inner, parents=inner_parents -%}
             {% include tpl %}
         {%- endwith -%}
-{%- endfor -%}
+{%- endfor %}
 
-{{ "\n" }}
 
-@mapper_registry.mapped
+@verifone_registry.mapped
 {{ class_annotation }}
 class {{ class_name }}{{ "({})".format(base_classes) if base_classes }}:
 {%- if help %}

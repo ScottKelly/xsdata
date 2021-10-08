@@ -87,7 +87,7 @@ class SqlAlchemyTemplateFilters(Filters):
         self, attr: Attr, parent_namespace: Optional[str], parents: List[str]
     ) -> Dict:
         metadata = super().field_metadata(attr, parent_namespace, parents)
-        metadata["sa"] = self.sql_alchemy_column(metadata.get("name", None), attr, parent_namespace, parents),
+        metadata["sa"] = self.sql_alchemy_column(metadata.get("name", None), attr, parent_namespace, parents)
         return self.filter_metadata(metadata)
 
     def sql_alchemy_column(self, name: str, attr: Attr, parent_namespace: Optional[str], parents: List[str]) -> str:
@@ -117,7 +117,7 @@ class SqlAlchemyTemplateFilters(Filters):
         elif self.has_complex_types(type_names):
             attr_fqname, attr_class = self.find_class_by_qname(attr.types[0].qname, parents)
             if attr_class.is_enumeration:
-                return Markup(column_fmt.format(f"SqlEnum({type_name}, name=\"{'_'.join([type_name]+parents)}\")"))
+                return Markup(column_fmt.format(f"SqlEnum({type_name}, name=\"{'_'.join([type_name]+parents)}\", inherit_schema=True)"))
             else:
                 if attr.is_tokens:
                     raise ValueError("No idea how to handle lists of lists")
@@ -214,7 +214,7 @@ class SqlAlchemyTemplateFilters(Filters):
             if clazz == obj:
                 continue
             for ref_attr in clazz.attrs:
-                ref_attr_types = self.type_names(ref_attr, [])
+                ref_attr_types = self.type_names(ref_attr, [self.class_name(clazz.qname)])
                 if not self.has_complex_types(ref_attr_types):
                     continue
 
@@ -333,9 +333,9 @@ class SqlAlchemyTemplateFilters(Filters):
             return class_name, self.fqname_map[class_name]
         else:
             for fqdn, clazz in self.fqname_map.items():
-                if possible_fqdn in fqdn:
+                if fqdn.endswith(possible_fqdn):
                     return fqdn, clazz
-                elif class_name in fqdn:
+                elif fqdn.endswith(class_name):
                     return fqdn, clazz
         raise ValueError(f"Can't find class for qname {qname}")
 
