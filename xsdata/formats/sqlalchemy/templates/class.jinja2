@@ -20,7 +20,7 @@
 {%- endfor %}
 
 
-@verifone_registry.mapped
+@{{ obj|schema_name }}_registry.mapped
 {{ class_annotation }}
 class {{ class_name }}{{ "({})".format(base_classes) if base_classes }}:
 {%- if help %}
@@ -53,22 +53,21 @@ class {{ class_name }}{{ "({})".format(base_classes) if base_classes }}:
 {%- endif -%}
 
     {{ "\n" }}
-    id: int = field(init=False, metadata=dict(sa=Column(Integer, primary_key=True)))
+    id: int = field(init=False, metadata={"type": "ignored", "sa": Column(Integer, primary_key=True)})
     """Auto-incrementing primary key."""
 
 
     {% if not base_classes %}
-    created_timestamp: Optional[XmlDateTime] = field(init=False, metadata=dict(sa=Column(SqlXmlDateTime(timezone=True), default=func.now())))
+    created_timestamp: Optional[XmlDateTime] = field(init=False, metadata={"type": "ignored", "sa": Column(SqlXmlDateTime(timezone=True), default=func.now())})
     """Time when object was created. Stored in DB as UTC"""
 
-    entity_type: str = field(init=False, metadata={"sa": Column(String(75))})
+    entity_type: str = field(init=False, metadata={"type": "ignored", "sa": Column(String(75))})
     """SQLAlchemy polymorphic discrimator"""
     {% endif %}
     # inherited attributes
-    # {{ base_classes }}
     {% if base_classes %}
     {% for base_class in base_classes.split(",") %}
-    {{ base_class|field_name(obj.name) }}_id: int = field(init=False, metadata={"sa": Column(ForeignKey("{{ [base_class]|table_name }}.id", use_alter=True))})
+    {{ base_class|field_name(obj.name) }}_id: int = field(init=False, metadata={"type": "ignored", "sa": Column(ForeignKey("{{ [base_class]|table_name }}.id", use_alter=True))})
     {% endfor %}
     {% endif %}
     # relationships
@@ -77,19 +76,24 @@ class {{ class_name }}{{ "({})".format(base_classes) if base_classes }}:
     {{ relationship }}
 {% endfor -%}
 
-{#{% for attr in obj.extensions|extension_attrs %}#}
-{#    {%- set field_typing = attr|field_type(parents) %}#}
-{#    {%- set field_definition = attr|field_definition(obj.ns_map, parent_namespace, parents) %}#}
-{#    {{ attr.name|field_name(obj.name) }}: {{ field_typing }} = {{ field_definition }}#}
-{#{% endfor%}#}
     # class attributes
 {%- for attr in obj.attrs %}
     {%- set field_typing = attr|field_type(parents) %}
     {%- set field_definition = attr|field_definition(obj.ns_map, parent_namespace, parents) %}
+    {%- set attr_name = attr.name|field_name(obj.name) %}
     {% if attr|is_many_to_one(parents) %}
-    {{ attr.name|field_name(obj.name) }}_id: int = {{ attr|relationship_definition(obj.ns_map, parent_namespace, parents) }}
+    {{ attr_name }}_id: int = {{ attr|relationship_definition(obj.ns_map, parent_namespace, parents) }}
     {% endif %}
-    {{ attr.name|field_name(obj.name) }}: {{ field_typing }} = {{ field_definition }}
+    {{ attr_name }}: {{ field_typing }} = {{ field_definition }}
+    {% if attr|is_timezone_aware(parents) %}
+    {{ attr_name }}_utc_offset: timedelta =  field(default=None, init=False, metadata={"type": "ignore", "sa": Column(Interval)})
+    @validates("{{ attr_name }}")
+    def validate_{{ attr_name }}(self, key, {{ attr_name }}):
+        if isinstance({{ attr_name }}, XmlDateTime):
+            self.{{ attr_name }}_utc_offset = {{ attr_name }}.to_datetime().utcoffset()
+        return {{ attr_name }}
+    {% endif %}
+
 {%- endfor -%}
     # inner classes
 {% for inner in obj.inner %}

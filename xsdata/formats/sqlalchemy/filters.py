@@ -39,7 +39,9 @@ class SqlAlchemyTemplateFilters(Filters):
             "relationship_backrefs": self.relationship_backrefs,
             "table_name": self.table_name,
             "is_many_to_one": self.is_many_to_one,
-            "relationship_definition": self.relationship_definition
+            "relationship_definition": self.relationship_definition,
+            "schema_name": self.schema_name,
+            "is_timezone_aware": self.is_timezone_aware
         })
 
     def table_name(self, parents: List[str]):
@@ -62,6 +64,7 @@ class SqlAlchemyTemplateFilters(Filters):
         """Convert the given string to a class name according to the selected
         conventions or use an existing alias."""
         alias = self.class_aliases.get(name)
+        name = re.sub(r"\{.*\}", "", name)
         if alias:
             return alias
         if parents:
@@ -74,6 +77,12 @@ class SqlAlchemyTemplateFilters(Filters):
         if self.is_complex_type(self.type_name(extension.type)):
             return self.find_class_by_qname(extension.type.qname, [])[1]
 
+    def is_timezone_aware(self, attr, parents):
+        type_names = self.type_names(attr, parents)
+        date_types = ["date", "datetime", "XmlDate", "XmlDateTime"]
+        for date_type in date_types:
+            if date_type in type_names:
+                return True
 
     def extension_attrs(self, extensions: List[Extension]) -> List[Attr]:
         attrs = []
@@ -99,20 +108,26 @@ class SqlAlchemyTemplateFilters(Filters):
 
         postgres_datatype: Optional[str] = None
         if len(type_names) > 1:
-            raise ValueError("Multiple value types for DB storage is unsupported")
+            type_names = [type_name for type_name in type_names if self.is_complex_type(type_name)]
+            if len(type_names) == 1:
+                type_name = type_names[0]
+
         if type_name in ("dict", "object"):
             postgres_datatype = "JSONB"
         elif type_name == "bytes":
-            postgres_datatype= "LargeBinary()"
+            postgres_datatype = "LargeBinary()"
         elif type_name == "datetime" or type_name == "XmlDateTime":
             postgres_datatype = "SqlXmlDateTime"
+        elif type_name == "date" or type_name == "XmlDate":
+            postgres_datatype = "SqlXmlDate"
         elif type_name == "bool":
             postgres_datatype = "Boolean"
         elif type_name == "int":
             postgres_datatype = "Integer"
         elif type_name == "Decimal":
             postgres_datatype = "Numeric"
-        elif type_name == "str":
+        # use String in the DB for Union types
+        elif type_name == "str" or len(type_names) > 1:
             postgres_datatype= "String"
         elif self.has_complex_types(type_names):
             attr_fqname, attr_class = self.find_class_by_qname(attr.types[0].qname, parents)
@@ -131,12 +146,11 @@ class SqlAlchemyTemplateFilters(Filters):
                     elif name == "trRecall":
                         return Markup(f"relationship({self.class_name(type_name)}, primaryjoin=\"TrRecall.tr_header_type_id==TrHeaderType.id\")")
                     else:
-                        return Markup(f"relationship({self.class_name(type_name)})")
+                        return Markup(f"relationship({self.class_name(type_name)}, back_populates=\"{self.field_name(parents[-1], '')}_{self.field_name(attr.name, parent_namespace)}\")")
                     # return "relationship(back_populates=\"{}\")".format(
                     #     self.field_case(obj.qname))
                 else:
-                    # handled in the relationships function
-                    return Markup(f"relationship({self.class_name(type_name)}, foreign_keys=[{self.field_name(attr.name, parent_namespace)}_id.metadata[\"sa\"]])")
+                    return Markup(f'relationship({self.class_name(type_name)}, back_populates="{self.field_name(parents[-1], "")}_{self.field_name(attr.name, parent_namespace)}", foreign_keys=[{self.field_name(attr.name, parent_namespace)}_id.metadata["sa"]])')
                     # if attr_class.qname not in type_names[0]:
                     #     table_name = self.table_name(type_names[0].split("."))
                     # else:
@@ -155,11 +169,11 @@ class SqlAlchemyTemplateFilters(Filters):
 
     def is_complex_type(self, type_name: str) -> bool:
          return type_name not in ['bool', "int", "Decimal", "str", "dict", "object",
-                                                 "float", "datetime", "XmlDateTime", "bytes"]
+                                                 "float", "datetime", "XmlDateTime", "XmlDate", "XmlDateTime", "bytes"]
 
     def has_complex_types(self, type_names: List[str]):
         return bool(set(type_names) - {'bool', "int", "Decimal", "str", "dict", "object",
-                                             "float", "datetime", "XmlDateTime", "bytes"})
+                                             "float", "datetime", "XmlDateTime", "XmlDate", "XmlDateTime", "bytes"})
 
     def type_names(self, attr: Attr, parents: List[str]) -> List[str]:
         return collections.unique_sequence(
@@ -173,8 +187,18 @@ class SqlAlchemyTemplateFilters(Filters):
         result = ", ".join(type_names)
         if len(type_names) > 1:
             if self.has_complex_types(type_names):
-                raise ValueError("Unsupported Union Types for Complex Types")
-            result = f"Union[{result}]"
+                complex_type_names = [type_name for type_name in type_names if self.is_complex_type(type_name)]
+                if len(complex_type_names) == 1:
+                    fqname, attr_class = self.find_class_by_qname(attr.types[0].qname,
+                                                                  parents)
+                    if fqname not in complex_type_names[0]:
+                        result = fqname
+                    else:
+                        result = complex_type_names[0]
+                else:
+                    result = f"Union[{result}]"
+            else:
+                result = f"Union[{result}]"
         elif self.has_complex_types(type_names):
             # don't use parents here because two different classes could
             # reference the same type
@@ -224,22 +248,24 @@ class SqlAlchemyTemplateFilters(Filters):
                     if ref_attr.is_list:
                         full_class_name = self.find_fqname_by_class(clazz)
                         table_name = self.table_name(full_class_name.split("."))
-                        relationships.append('{}_id: int = field(default=None, metadata={{"sa": Column(ForeignKey(\"{}.id\", use_alter=True))}})'.format(self.field_case(clazz.qname), table_name))
-                        relationships.append("{qname}: Optional[\"{fqname}\"] = field(default=None, metadata={{\"sa\": relationship(\"{fqname}\", foreign_keys=[{qname}_id.metadata[\"sa\"]], back_populates=\"{attr_name}\")}})".format(
+                        relationships.append('{}_id: int = field(default=None, metadata={{"type": "ignored", "sa": Column(ForeignKey(\"{}.id\", use_alter=True))}})'.format(self.field_case(clazz.qname), table_name))
+                        relationships.append("{qname}_{attr_name}: Optional[\"{fqname}\"] = field(default=None, metadata={{\"type\": \"ignored\", \"sa\": relationship(\"{fqname}\", foreign_keys=[{qname}_id.metadata[\"sa\"]], back_populates=\"{attr_name}\")}})".format(
                             qname=self.field_case(clazz.qname),
                             fqname=self.class_name(full_class_name),
                             attr_name=self.field_case(ref_attr.name)
                         ))
-                    else:
-                        pass
-                        # full_class_name = self.fqname(clazz)
+                    elif not ref_attr_class.is_enumeration:
+
+                        full_class_name = self.find_fqname_by_class(clazz)
                         #table_name = self.table_name(full_class_name.split("."))
-                        #relationships.append("{}_id: int = Field(foreign_key=\"{}.id\")".format(self.field_case(clazz.qname), table_name))
-                        # relationships.append("{qname}: \"{fqname}\" = relationship(\"{fqname}\", back_populates=\"{attr_name}\")".format(
-                        #     qname=self.field_case(clazz.qname),
-                        #     fqname=self.class_name(full_class_name),
-                        #     attr_name=self.field_case(ref_attr.name)
-                        # ))
+                        # use qname combined with attr_name to guarantee that a model
+                        # with multiple relationships to the model has unique names for
+                        # each
+                        relationships.append("{qname}_{attr_name}: Optional[\"{fqname}\"] = field(init=False, default_factory=list, metadata={{\"sa\": relationship(\"{fqname}\", back_populates=\"{attr_name}\", foreign_keys=\"{fqname}.{attr_name}_id\")}})".format(
+                            qname=self.field_case(clazz.qname),
+                            fqname=self.class_name(full_class_name),
+                            attr_name=self.field_case(ref_attr.name)
+                        ))
             # TODO this might not be required if the class_list has all of the classes in it
             self.build_backwards_relationships(obj, clazz.inner, relationships, parents)
         # find all classes that have a list reference to it
@@ -337,7 +363,7 @@ class SqlAlchemyTemplateFilters(Filters):
                     return fqdn, clazz
                 elif fqdn.endswith(class_name):
                     return fqdn, clazz
-        raise ValueError(f"Can't find class for qname {qname}")
+        raise ValueError(f"Can't find class for qname {class_name}")
 
         # for clazz in self.classes:
         #     if clazz.qname in parents:
@@ -403,3 +429,47 @@ class SqlAlchemyTemplateFilters(Filters):
                 )
             )
             return f"(\n{value}\n{' ' * indent})"
+
+    def schema_name(self, obj: Class):
+        return obj.package.split(".")[0]
+
+    @classmethod
+    def build_import_patterns(cls) -> Dict[str, Dict]:
+        import_patterns = super().build_import_patterns()
+        additional_patterns = {
+            "sqlalchemy": {
+                "Column": ["Column"],
+                "ForeignKey": ["ForeignKey"],
+                "String": ["String"],
+                "Integer": ["Integer"],
+                "Numeric": ["Numeric"],
+                "Boolean": ["Boolean"],
+                "LargeBinary": ["LargeBinary"],
+                "Enum as SqlEnum": ["SqlEnum"],
+                "func": ["func"],
+                "orm": {
+                    "relationship": ["relationship"],
+                    "registry": ["registry"]
+                },
+                "dialects": {
+                    "postgresql": {
+                        "JSONB": ["JSONB"],
+                        "ARRAY": ["ARRAY"]
+                    }
+                }
+            },
+            "connexxus": {
+                "models.registry": {
+                    "connexxus_registry": ["registry.mapped"]
+                }
+            },
+            "common": {
+                "db": {
+                    "SqlXmlDateTime": ["SqlXmlDateTime"],
+                    "SqlXmlDate": ["SqlXmlDate("]
+                }
+            }
+        }
+
+        import_patterns.update(additional_patterns)
+        return import_patterns

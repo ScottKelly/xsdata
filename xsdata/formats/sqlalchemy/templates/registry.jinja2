@@ -1,0 +1,4 @@
+from sqlalchemy.orm import registry
+
+{{ schema_name }}_registry = registry()
+{{ schema_name }}_registry.metadata.schema = "{{ schema_name }}"
