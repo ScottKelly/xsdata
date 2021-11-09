@@ -1,17 +1,22 @@
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import List, Optional
 
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY
-from sqlalchemy.orm import validates, relationship
-from xsdata.models.datatype import XmlDateTime
+from sqlalchemy.orm import validates, relationship, registry
+from xsdata.models.datatype import XmlDateTime, XmlDate
 from sqlalchemy import Column, ForeignKey, String, Integer, Numeric, Boolean, \
     LargeBinary, Enum as SqlEnum, func, orm, Interval
 
-from common.db import SqlXmlDateTime
-from verifone.models import verifone_registry
+from common.db import SqlXmlDateTime, StringEnum
+# import to trigger registration of new converters
+import common.converters
+
+verifone_registry = registry()
+verifone_registry.metadata.schema = "verifone"
+
 
 {%- for source, items in imports|groupby("source") -%}
 {%- if items|length == 1 -%}

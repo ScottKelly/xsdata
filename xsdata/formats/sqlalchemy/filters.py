@@ -96,6 +96,10 @@ class SqlAlchemyTemplateFilters(Filters):
         self, attr: Attr, parent_namespace: Optional[str], parents: List[str]
     ) -> Dict:
         metadata = super().field_metadata(attr, parent_namespace, parents)
+        # poor data quality means we shouldn't expect anything as required since we
+        # may not receive it from the store
+        metadata["required"] = False
+        metadata["nillable"] = True
         metadata["sa"] = self.sql_alchemy_column(metadata.get("name", None), attr, parent_namespace, parents)
         return self.filter_metadata(metadata)
 
@@ -128,11 +132,11 @@ class SqlAlchemyTemplateFilters(Filters):
             postgres_datatype = "Numeric"
         # use String in the DB for Union types
         elif type_name == "str" or len(type_names) > 1:
-            postgres_datatype= "String"
+            postgres_datatype = "String"
         elif self.has_complex_types(type_names):
             attr_fqname, attr_class = self.find_class_by_qname(attr.types[0].qname, parents)
             if attr_class.is_enumeration:
-                return Markup(column_fmt.format(f"SqlEnum({type_name}, name=\"{'_'.join([type_name]+parents)}\", inherit_schema=True)"))
+                postgres_datatype = "StringEnum"
             else:
                 if attr.is_tokens:
                     raise ValueError("No idea how to handle lists of lists")
@@ -160,12 +164,11 @@ class SqlAlchemyTemplateFilters(Filters):
         else:
             raise ValueError(f"Could not find matching SQL Type for XML Type(s): {type_names}")
 
-        if not self.has_complex_types(type_names):
-            # use postgresql arrays for lists of primitive types
-            if attr.is_list:
-                return Markup(column_fmt.format(f"ARRAY({postgres_datatype})"))
-            else:
-                return Markup(column_fmt.format(postgres_datatype))
+        # use postgresql arrays for lists of primitive types
+        if attr.is_list:
+            return Markup(column_fmt.format(f"ARRAY({postgres_datatype})"))
+        else:
+            return Markup(column_fmt.format(postgres_datatype))
 
     def is_complex_type(self, type_name: str) -> bool:
          return type_name not in ['bool', "int", "Decimal", "str", "dict", "object",
@@ -248,11 +251,13 @@ class SqlAlchemyTemplateFilters(Filters):
                     if ref_attr.is_list:
                         full_class_name = self.find_fqname_by_class(clazz)
                         table_name = self.table_name(full_class_name.split("."))
-                        relationships.append('{}_id: int = field(default=None, metadata={{"type": "ignored", "sa": Column(ForeignKey(\"{}.id\", use_alter=True))}})'.format(self.field_case(clazz.qname), table_name))
-                        relationships.append("{qname}_{attr_name}: Optional[\"{fqname}\"] = field(default=None, metadata={{\"type\": \"ignored\", \"sa\": relationship(\"{fqname}\", foreign_keys=[{qname}_id.metadata[\"sa\"]], back_populates=\"{attr_name}\")}})".format(
-                            qname=self.field_case(clazz.qname),
+                        qname = self.field_case(clazz.qname)
+                        attr_name = self.field_case(ref_attr.name)
+                        relationships.append('{}_{}_id: int = field(default=None, metadata={{"type": "ignored", "sa": Column(ForeignKey(\"{}.id\", use_alter=True))}})'.format(qname, attr_name, table_name))
+                        relationships.append("{qname}_{attr_name}: Optional[\"{fqname}\"] = field(default=None, metadata={{\"type\": \"ignored\", \"sa\": relationship(\"{fqname}\", foreign_keys=[{qname}_{attr_name}_id.metadata[\"sa\"]], back_populates=\"{attr_name}\")}})".format(
+                            qname=qname,
                             fqname=self.class_name(full_class_name),
-                            attr_name=self.field_case(ref_attr.name)
+                            attr_name=attr_name
                         ))
                     elif not ref_attr_class.is_enumeration:
 
@@ -261,7 +266,7 @@ class SqlAlchemyTemplateFilters(Filters):
                         # use qname combined with attr_name to guarantee that a model
                         # with multiple relationships to the model has unique names for
                         # each
-                        relationships.append("{qname}_{attr_name}: Optional[\"{fqname}\"] = field(init=False, default_factory=list, metadata={{\"sa\": relationship(\"{fqname}\", back_populates=\"{attr_name}\", foreign_keys=\"{fqname}.{attr_name}_id\")}})".format(
+                        relationships.append("{qname}_{attr_name}: Optional[\"{fqname}\"] = field(init=False, default_factory=list, metadata={{\"type\": \"ignored\", \"sa\": relationship(\"{fqname}\", back_populates=\"{attr_name}\", foreign_keys=\"{fqname}.{attr_name}_id\")}})".format(
                             qname=self.field_case(clazz.qname),
                             fqname=self.class_name(full_class_name),
                             attr_name=self.field_case(ref_attr.name)
@@ -283,7 +288,7 @@ class SqlAlchemyTemplateFilters(Filters):
         parents: List[str],):
         fqname, attr_class = self.find_class_by_qname(attr.types[0].qname, parents)
         table_name = self.table_name(fqname.split("."))
-        return 'field(default=None, metadata={{"sa": Column(ForeignKey(\"{}.id\", use_alter=True))}})'.format(table_name)
+        return 'field(default=None, metadata={{"type": "ignored", "sa": Column(ForeignKey(\"{}.id\", use_alter=True))}})'.format(table_name)
 
     # def build_relationships(self, obj: Class, relationships: List[str], parents: List[str]) -> None:
     #     for attr in obj.attrs:
