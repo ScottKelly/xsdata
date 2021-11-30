@@ -25,10 +25,9 @@
 class {{ class_name }}{{ "({})".format(base_classes) if base_classes }}:
 {%- if help %}
 {{ help|indent(4, first=True) }}
-{%- endif -%}
+{%- endif %}
 
-    {{ "\n" }}
-    __tablename__ = "{{ table_name }}"
+    {{ "__tablename__ = '{}'".format(table_name) if not base_classes }}
     __sa_dataclass_metadata_key__ = "sa"
     __mapper_args__ = {
         'polymorphic_identity': '{{ class_name }}',
@@ -50,45 +49,17 @@ class {{ class_name }}{{ "({})".format(base_classes) if base_classes }}:
         {%- endif %}
 {%- endif %}
 
-
-
-
-    {%- if not base_classes %}
-    id: int = field(init=False, metadata={"type": "ignored", "sa": Column(Integer, primary_key=True)})
-    """Auto-incrementing primary key."""
-
-    created_timestamp: Optional[XmlDateTime] = field(init=False, metadata={"type": "ignored", "sa": Column(SqlXmlDateTime(timezone=True), default=func.now())})
-    """Time when object was created. Stored in DB as UTC"""
-
-    entity_type: str = field(init=False, metadata={"type": "ignored", "sa": Column(String(75))})
-    """SQLAlchemy polymorphic discrimator"""
-    {% else %}
-    {{ table_name }}_id: int = field(init=False, metadata={"type": "ignored", "sa": Column(Integer, primary_key=True)})
-    """Auto-incrementing primary key with specific name so it doesn't conflict with base class's id field"""
-    {% endif %}
-    # inherited attributes
-    {% if base_classes %}
-    {% for base_class in base_classes.split(",") %}
-    {{ base_class|field_name(obj.name) }}_id: int = field(init=False, metadata={"type": "ignored", "sa": Column(ForeignKey("{{ [base_class]|table_name }}.id", use_alter=True))})
-    {% endfor %}
-    {% endif %}
-    # relationships
-{%- for relationship in obj|relationship_backrefs(parents) %}
-{#    {{ relationship | relationship_name }}: {{ relationship|relationship_type }} = {{ relationship|relationship_definition }}#}
-    {{ relationship }}
-{% endfor -%}
-
-    # class attributes
+    # XML Fields
 {%- for attr in obj.attrs %}
-    {%- set field_typing = attr|field_type(parents) %}
-    {%- set field_definition = attr|field_definition(obj.ns_map, parent_namespace, parents) %}
+    {%- set field_typing = attr|field_type(parents) -%}
+    {%- set field_definition = attr|field_definition(obj.ns_map, parent_namespace, parents) -%}
     {%- set attr_name = attr.name|field_name(obj.name) %}
     {% if attr|is_many_to_one(parents) %}
     {{ attr_name }}_id: int = {{ attr|relationship_definition(obj.ns_map, parent_namespace, parents) }}
     {% endif %}
     {{ attr_name }}: {{ field_typing }} = {{ field_definition }}
     {% if attr|is_timezone_aware(parents) %}
-    {{ attr_name }}_utc_offset: timedelta =  field(default=None, init=False, metadata={"type": "ignore", "sa": Column(Interval)})
+    {{ attr_name }}_utc_offset: timedelta =  field(default=None, init=False, metadata={"type": XmlType.IGNORE, "sa": Column(Interval)})
     @validates("{{ attr_name }}")
     def validate_{{ attr_name }}(self, key, {{ attr_name }}):
         if isinstance({{ attr_name }}, XmlDateTime) or isinstance({{ attr_name }}, XmlDate):
@@ -100,12 +71,32 @@ class {{ class_name }}{{ "({})".format(base_classes) if base_classes }}:
          return self.{{ attr_name }}.to_datetime().astimezone(tz=timezone(self.{{ attr_name }}_utc_offset))
 
     {% endif %}
-
-{%- endfor -%}
-    # inner classes
-{% for inner in obj.inner %}
-    {% set inner_parents = parents + [inner.name] %}
-    {% set inner_class_name = inner.name | class_name() %}
-    {{ inner_class_name }} = {{ inner.name | class_name(inner_parents) }}
 {% endfor %}
+
+    # XML-Defined Inner Classes
+{%- for inner in obj.inner -%}
+    {%- set inner_parents = parents + [inner.name] -%}
+    {%- set inner_class_name = inner.name | class_name() %}
+    {{ inner_class_name }} = {{ inner.name | class_name(inner_parents) }}
+{% endfor -%}
+
+{%- if not base_classes %}
+    # Database Fields
+    id: int = field(init=False, metadata={"type": XmlType.IGNORE, "sa": Column(Integer, primary_key=True)})
+    """Auto-incrementing primary key."""
+
+    created_timestamp: Optional[XmlDateTime] = field(init=False, metadata={"type": XmlType.IGNORE, "sa": Column(SqlXmlDateTime(timezone=True), default=sql_func.now())})
+    """Time when object was created. Stored in DB as UTC"""
+
+    entity_type: str = field(init=False, metadata={"type": XmlType.IGNORE, "sa": Column(String(75))})
+    """SQLAlchemy polymorphic entity discriminator"""
+{% endif %}
+
+    # Backwards Relationships for SQLAlchemy
+{%- for relationship in obj|relationship_backrefs(parents) %}
+    {{ relationship }}
+{% endfor -%}
+
+
+
 

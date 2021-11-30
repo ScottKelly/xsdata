@@ -117,7 +117,7 @@ class SqlAlchemyTemplateFilters(Filters):
                 type_name = type_names[0]
 
         if type_name in ("dict", "object"):
-            postgres_datatype = "JSONB"
+            postgres_datatype = "XmlJSONB"
         elif type_name == "bytes":
             postgres_datatype = "LargeBinary()"
         elif type_name == "datetime" or type_name == "XmlDateTime":
@@ -146,9 +146,9 @@ class SqlAlchemyTemplateFilters(Filters):
                         # strange special case where these two models have multiple foreign keys
                         # going to each other and SQL alchemy can't automatically
                         # figure out the primary join
-                        return Markup(f"relationship({self.class_name(type_name)}, primaryjoin='TrHeaderType.id==TrTickNum.tr_header_type_id')")
+                        return Markup(f"relationship({self.class_name(type_name)}, primaryjoin='TrHeaderType.id==TrTickNum.tr_header_type_tr_kiosk_order_id')")
                     elif name == "trRecall":
-                        return Markup(f"relationship({self.class_name(type_name)}, primaryjoin=\"TrRecall.tr_header_type_id==TrHeaderType.id\")")
+                        return Markup(f"relationship({self.class_name(type_name)}, primaryjoin=\"TrRecall.tr_header_type_tr_recall_id==TrHeaderType.id\")")
                     else:
                         return Markup(f"relationship({self.class_name(type_name)}, back_populates=\"{self.field_name(parents[-1], '')}_{self.field_name(attr.name, parent_namespace)}\")")
                     # return "relationship(back_populates=\"{}\")".format(
@@ -248,13 +248,32 @@ class SqlAlchemyTemplateFilters(Filters):
                 ref_attr_fqname, ref_attr_class = self.find_class_by_qname(ref_attr.types[0].qname, [clazz.qname])
                 obj_fqname = self.find_fqname_by_class(obj)
                 if ref_attr_fqname == obj_fqname:
+                    # has_another_attr_from_same_class = False
+                    # for ref_attr_2 in clazz.attrs:
+                    #     ref_attr_types_2 = self.type_names(ref_attr_2,
+                    #                                      [self.class_name(clazz.qname)])
+                    #     if not self.has_complex_types(ref_attr_types_2):
+                    #         continue
+                    #
+                    #     ref_attr_fqname_2, ref_attr_class_2 = self.find_class_by_qname(
+                    #         ref_attr_2.types[0].qname, [clazz.qname])
+                    #     obj_fqname_2 = self.find_fqname_by_class(obj)
+                    #     if obj_fqname_2 == obj_fqname and ref_attr_2 != ref_attr:
+                    #         has_another_attr_from_same_class = True
+                    #         break
+
                     if ref_attr.is_list:
                         full_class_name = self.find_fqname_by_class(clazz)
                         table_name = self.table_name(full_class_name.split("."))
                         qname = self.field_case(clazz.qname)
                         attr_name = self.field_case(ref_attr.name)
-                        relationships.append('{}_{}_id: int = field(default=None, metadata={{"type": "ignored", "sa": Column(ForeignKey(\"{}.id\", use_alter=True))}})'.format(qname, attr_name, table_name))
-                        relationships.append("{qname}_{attr_name}: Optional[\"{fqname}\"] = field(default=None, metadata={{\"type\": \"ignored\", \"sa\": relationship(\"{fqname}\", foreign_keys=[{qname}_{attr_name}_id.metadata[\"sa\"]], back_populates=\"{attr_name}\")}})".format(
+                        # if has_another_attr_from_same_class:
+                        #     fk_id = f"{qname}_{attr_name}_id"
+                        # else:
+                        #     fk_id = f"{qname}_id"
+                       # relationships.append('{}: int = field(default=None, metadata={{"type": XmlType.IGNORE, "sa": Column(ForeignKey(\"{}.id\", use_alter=True))}})'.format(fk_id, table_name))
+                        relationships.append('{}_{}_id: int = field(default=None, metadata={{"type": XmlType.IGNORE, "sa": Column(ForeignKey(\"{}.id\", use_alter=True))}})'.format(qname, attr_name, table_name))
+                        relationships.append("{qname}_{attr_name}: Optional[\"{fqname}\"] = field(default=None, metadata={{\"type\": XmlType.IGNORE, \"sa\": relationship(\"{fqname}\", foreign_keys=[{qname}_{attr_name}_id.metadata[\"sa\"]], back_populates=\"{attr_name}\")}})".format(
                             qname=qname,
                             fqname=self.class_name(full_class_name),
                             attr_name=attr_name
@@ -266,7 +285,7 @@ class SqlAlchemyTemplateFilters(Filters):
                         # use qname combined with attr_name to guarantee that a model
                         # with multiple relationships to the model has unique names for
                         # each
-                        relationships.append("{qname}_{attr_name}: Optional[\"{fqname}\"] = field(init=False, default_factory=list, metadata={{\"type\": \"ignored\", \"sa\": relationship(\"{fqname}\", back_populates=\"{attr_name}\", foreign_keys=\"{fqname}.{attr_name}_id\")}})".format(
+                        relationships.append("{qname}_{attr_name}: Optional[\"{fqname}\"] = field(init=False, default_factory=list, metadata={{\"type\": XmlType.IGNORE, \"sa\": relationship(\"{fqname}\", back_populates=\"{attr_name}\", foreign_keys=\"{fqname}.{attr_name}_id\")}})".format(
                             qname=self.field_case(clazz.qname),
                             fqname=self.class_name(full_class_name),
                             attr_name=self.field_case(ref_attr.name)
@@ -286,9 +305,16 @@ class SqlAlchemyTemplateFilters(Filters):
         ns_map: Dict,
         parent_namespace: Optional[str],
         parents: List[str],):
+
         fqname, attr_class = self.find_class_by_qname(attr.types[0].qname, parents)
-        table_name = self.table_name(fqname.split("."))
-        return 'field(default=None, metadata={{"type": "ignored", "sa": Column(ForeignKey(\"{}.id\", use_alter=True))}})'.format(table_name)
+        if attr_class.extensions:
+            if len(attr_class.extensions) > 1:
+                # not sure how to handle this yet
+                raise ValueError("More than one inherited class is unsupported for SQLAlchemy")
+            table_name = self.table_name([attr_class.extensions[0].type.qname])
+        else:
+            table_name = self.table_name(fqname.split("."))
+        return 'field(default=None, metadata={{"type": XmlType.IGNORE, "sa": Column(ForeignKey(\"{}.id\", use_alter=True))}})'.format(table_name)
 
     # def build_relationships(self, obj: Class, relationships: List[str], parents: List[str]) -> None:
     #     for attr in obj.attrs:
@@ -451,14 +477,13 @@ class SqlAlchemyTemplateFilters(Filters):
                 "Boolean": ["Boolean"],
                 "LargeBinary": ["LargeBinary"],
                 "Enum as SqlEnum": ["SqlEnum"],
-                "func": ["func"],
+                #"func": ["func"],
                 "orm": {
                     "relationship": ["relationship"],
                     "registry": ["registry"]
                 },
                 "dialects": {
                     "postgresql": {
-                        "JSONB": ["JSONB"],
                         "ARRAY": ["ARRAY"]
                     }
                 }

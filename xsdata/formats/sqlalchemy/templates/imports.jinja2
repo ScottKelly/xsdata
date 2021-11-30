@@ -7,10 +7,12 @@ from typing import List, Optional
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY
 from sqlalchemy.orm import validates, relationship, registry
 from xsdata.models.datatype import XmlDateTime, XmlDate
-from sqlalchemy import Column, ForeignKey, String, Integer, Numeric, Boolean, \
-    LargeBinary, Enum as SqlEnum, func, orm, Interval
+from xsdata.formats.dataclass.models.elements import XmlType
 
-from common.db import SqlXmlDateTime, StringEnum
+from sqlalchemy import Column, ForeignKey, String, Integer, Numeric, Boolean, \
+    LargeBinary, Enum as SqlEnum, func as sql_func, orm, Interval
+
+from common.db import SqlXmlDateTime, StringEnum, XmlJSONB
 # import to trigger registration of new converters
 import common.converters
 
