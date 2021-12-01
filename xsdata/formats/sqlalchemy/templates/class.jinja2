@@ -82,13 +82,13 @@ class {{ class_name }}{{ "({})".format(base_classes) if base_classes }}:
 
 {%- if not base_classes %}
     # Database Fields
-    id: int = field(init=False, metadata={"type": XmlType.IGNORE, "sa": Column(Integer, primary_key=True)})
+    id: int = field(init=False, metadata={"type": XmlType.IGNORE, "sa": Column(BigInteger, primary_key=True)})
     """Auto-incrementing primary key."""
 
     created_timestamp: Optional[XmlDateTime] = field(init=False, metadata={"type": XmlType.IGNORE, "sa": Column(SqlXmlDateTime(timezone=True), default=sql_func.now())})
     """Time when object was created. Stored in DB as UTC"""
 
-    entity_type: str = field(init=False, metadata={"type": XmlType.IGNORE, "sa": Column(String(75))})
+    entity_type: str = field(init=False, metadata={"type": XmlType.IGNORE, "sa": Column(String(75), index=True)})
     """SQLAlchemy polymorphic entity discriminator"""
 {% endif %}
 

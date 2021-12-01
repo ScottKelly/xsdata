@@ -272,7 +272,7 @@ class SqlAlchemyTemplateFilters(Filters):
                         # else:
                         #     fk_id = f"{qname}_id"
                        # relationships.append('{}: int = field(default=None, metadata={{"type": XmlType.IGNORE, "sa": Column(ForeignKey(\"{}.id\", use_alter=True))}})'.format(fk_id, table_name))
-                        relationships.append('{}_{}_id: int = field(default=None, metadata={{"type": XmlType.IGNORE, "sa": Column(ForeignKey(\"{}.id\", use_alter=True))}})'.format(qname, attr_name, table_name))
+                        relationships.append('{}_{}_id: int = field(default=None, metadata={{"type": XmlType.IGNORE, "sa": Column(ForeignKey(\"{}.id\", use_alter=True), index=True)}})'.format(qname, attr_name, table_name))
                         relationships.append("{qname}_{attr_name}: Optional[\"{fqname}\"] = field(default=None, metadata={{\"type\": XmlType.IGNORE, \"sa\": relationship(\"{fqname}\", foreign_keys=[{qname}_{attr_name}_id.metadata[\"sa\"]], back_populates=\"{attr_name}\")}})".format(
                             qname=qname,
                             fqname=self.class_name(full_class_name),
@@ -301,7 +301,7 @@ class SqlAlchemyTemplateFilters(Filters):
             _, attr_class = self.find_class_by_qname(attr.types[0].qname, parents)
             return not (attr.is_list or attr.is_enumeration or attr_class.is_enumeration)
 
-    def relationship_definition(self,         attr: Attr,
+    def relationship_definition(self, attr: Attr,
         ns_map: Dict,
         parent_namespace: Optional[str],
         parents: List[str],):
@@ -314,7 +314,7 @@ class SqlAlchemyTemplateFilters(Filters):
             table_name = self.table_name([attr_class.extensions[0].type.qname])
         else:
             table_name = self.table_name(fqname.split("."))
-        return 'field(default=None, metadata={{"type": XmlType.IGNORE, "sa": Column(ForeignKey(\"{}.id\", use_alter=True))}})'.format(table_name)
+        return 'field(default=None, metadata={{"type": XmlType.IGNORE, "sa": Column(ForeignKey(\"{}.id\", use_alter=True), index=True)}})'.format(table_name)
 
     # def build_relationships(self, obj: Class, relationships: List[str], parents: List[str]) -> None:
     #     for attr in obj.attrs:

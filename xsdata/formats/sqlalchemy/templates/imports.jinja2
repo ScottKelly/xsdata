@@ -10,7 +10,7 @@ from xsdata.models.datatype import XmlDateTime, XmlDate
 from xsdata.formats.dataclass.models.elements import XmlType
 
 from sqlalchemy import Column, ForeignKey, String, Integer, Numeric, Boolean, \
-    LargeBinary, Enum as SqlEnum, func as sql_func, orm, Interval
+    LargeBinary, Enum as SqlEnum, func as sql_func, orm, Interval, BigInteger
 
 from common.db import SqlXmlDateTime, StringEnum, XmlJSONB
 # import to trigger registration of new converters
