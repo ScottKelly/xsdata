@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import timedelta, datetime, timezone
 from decimal import Decimal
@@ -12,15 +14,14 @@ from xsdata.formats.dataclass.models.elements import XmlType
 from sqlalchemy import Column, ForeignKey, String, Integer, Numeric, Boolean, \
     LargeBinary, Enum as SqlEnum, func as sql_func, orm, Interval, BigInteger
 
-from common.db import SqlXmlDateTime, StringEnum, XmlJSONB
+from common.db import SqlXmlDateTime, StringEnum, XmlJSONB, SqlXmlDuration, SqlXmlTime, SqlXmlDate
 # import to trigger registration of new converters
 import common.converters
 
-verifone_registry = registry()
-verifone_registry.metadata.schema = "verifone"
+from connexxus.models.registry import connexxus_registry
 
 
-{%- for source, items in imports|groupby("source") -%}
+{% for source, items in imports|groupby("source") -%}
 {%- if items|length == 1 -%}
 from {{ source | import_module(module)  }} import {{ items[0].name | import_class(alias=items[0].alias) }}
 {% else -%}
@@ -29,5 +30,5 @@ from {{ source | import_module(module) }} import (
     {{ item.name | import_class(alias=item.alias) }},
 {%- endfor %}
 )
-{% endif -%}
+{% endif %}
 {%- endfor %}

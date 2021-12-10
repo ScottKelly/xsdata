@@ -76,8 +76,8 @@ class {{ class_name }}{{ "({})".format(base_classes) if base_classes }}:
     # XML-Defined Inner Classes
 {%- for inner in obj.inner -%}
     {%- set inner_parents = parents + [inner.name] -%}
-    {%- set inner_class_name = inner.name | class_name() %}
-    {{ inner_class_name }} = {{ inner.name | class_name(inner_parents) }}
+    {%- set inner_class_name = inner.name | class_name(inner=True) %}
+    {{ inner_class_name }} = {{ inner.name | class_name(inner_parents, inner=True) }}
 {% endfor -%}
 
 {%- if not base_classes %}

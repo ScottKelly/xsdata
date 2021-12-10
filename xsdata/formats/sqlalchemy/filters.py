@@ -60,7 +60,7 @@ class SqlAlchemyTemplateFilters(Filters):
 
         return table_name
 
-    def class_name(self, name: str, parents=None) -> str:
+    def class_name(self, name: str, parents=None, inner=False) -> str:
         """Convert the given string to a class name according to the selected
         conventions or use an existing alias."""
         alias = self.class_aliases.get(name)
@@ -71,6 +71,10 @@ class SqlAlchemyTemplateFilters(Filters):
             name = ""
             for parent in parents:
                 name += self.class_name(parent)
+
+        if inner:
+            name += "InnerClass"
+
         return self.safe_name(name, self.class_safe_prefix, self.class_case)
 
     def get_class_for_extension(self, extension: Extension) -> Class:
@@ -124,6 +128,10 @@ class SqlAlchemyTemplateFilters(Filters):
             postgres_datatype = "SqlXmlDateTime"
         elif type_name == "date" or type_name == "XmlDate":
             postgres_datatype = "SqlXmlDate"
+        elif type_name == "time" or type_name == "XmlTime":
+            postgres_datatype = "SqlXmlTime"
+        elif type_name == "XmlDuration":
+            postgres_datatype = "SqlXmlDuration"
         elif type_name == "bool":
             postgres_datatype = "Boolean"
         elif type_name == "int":
@@ -172,11 +180,11 @@ class SqlAlchemyTemplateFilters(Filters):
 
     def is_complex_type(self, type_name: str) -> bool:
          return type_name not in ['bool', "int", "Decimal", "str", "dict", "object",
-                                                 "float", "datetime", "XmlDateTime", "XmlDate", "XmlDateTime", "bytes"]
+                                                 "float", "datetime", "XmlDateTime", "XmlDate", "XmlDateTime", "XmlDuration", "XmlTime", "bytes"]
 
     def has_complex_types(self, type_names: List[str]):
         return bool(set(type_names) - {'bool', "int", "Decimal", "str", "dict", "object",
-                                             "float", "datetime", "XmlDateTime", "XmlDate", "XmlDateTime", "bytes"})
+                                             "float", "datetime", "XmlDateTime", "XmlDate", "XmlDateTime", "XmlDuration", "XmlTime", "bytes"})
 
     def type_names(self, attr: Attr, parents: List[str]) -> List[str]:
         return collections.unique_sequence(
@@ -261,20 +269,23 @@ class SqlAlchemyTemplateFilters(Filters):
                     #     if obj_fqname_2 == obj_fqname and ref_attr_2 != ref_attr:
                     #         has_another_attr_from_same_class = True
                     #         break
-
+                    # qname can contain namespace so strip it out
+                    # e.g.
+                    # {http://www.naxml.org/POSBO/Vocabulary/2003-10-16}TransactionTax
+                    # to TransactionTax
+                    class_qname = self.field_case(self.class_name(clazz.qname))
                     if ref_attr.is_list:
                         full_class_name = self.find_fqname_by_class(clazz)
                         table_name = self.table_name(full_class_name.split("."))
-                        qname = self.field_case(clazz.qname)
                         attr_name = self.field_case(ref_attr.name)
                         # if has_another_attr_from_same_class:
                         #     fk_id = f"{qname}_{attr_name}_id"
                         # else:
                         #     fk_id = f"{qname}_id"
                        # relationships.append('{}: int = field(default=None, metadata={{"type": XmlType.IGNORE, "sa": Column(ForeignKey(\"{}.id\", use_alter=True))}})'.format(fk_id, table_name))
-                        relationships.append('{}_{}_id: int = field(default=None, metadata={{"type": XmlType.IGNORE, "sa": Column(ForeignKey(\"{}.id\", use_alter=True), index=True)}})'.format(qname, attr_name, table_name))
+                        relationships.append('{}_{}_id: int = field(default=None, metadata={{"type": XmlType.IGNORE, "sa": Column(ForeignKey(\"{}.id\", use_alter=True), index=True)}})'.format(class_qname, attr_name, table_name))
                         relationships.append("{qname}_{attr_name}: Optional[\"{fqname}\"] = field(default=None, metadata={{\"type\": XmlType.IGNORE, \"sa\": relationship(\"{fqname}\", foreign_keys=[{qname}_{attr_name}_id.metadata[\"sa\"]], back_populates=\"{attr_name}\")}})".format(
-                            qname=qname,
+                            qname=class_qname,
                             fqname=self.class_name(full_class_name),
                             attr_name=attr_name
                         ))
@@ -286,7 +297,7 @@ class SqlAlchemyTemplateFilters(Filters):
                         # with multiple relationships to the model has unique names for
                         # each
                         relationships.append("{qname}_{attr_name}: Optional[\"{fqname}\"] = field(init=False, default_factory=list, metadata={{\"type\": XmlType.IGNORE, \"sa\": relationship(\"{fqname}\", back_populates=\"{attr_name}\", foreign_keys=\"{fqname}.{attr_name}_id\")}})".format(
-                            qname=self.field_case(clazz.qname),
+                            qname=class_qname,
                             fqname=self.class_name(full_class_name),
                             attr_name=self.field_case(ref_attr.name)
                         ))
@@ -301,6 +312,7 @@ class SqlAlchemyTemplateFilters(Filters):
             _, attr_class = self.find_class_by_qname(attr.types[0].qname, parents)
             return not (attr.is_list or attr.is_enumeration or attr_class.is_enumeration)
 
+
     def relationship_definition(self, attr: Attr,
         ns_map: Dict,
         parent_namespace: Optional[str],
@@ -308,10 +320,24 @@ class SqlAlchemyTemplateFilters(Filters):
 
         fqname, attr_class = self.find_class_by_qname(attr.types[0].qname, parents)
         if attr_class.extensions:
+            table_qname = self.class_name(attr_class.extensions[0].type.qname)
             if len(attr_class.extensions) > 1:
                 # not sure how to handle this yet
                 raise ValueError("More than one inherited class is unsupported for SQLAlchemy")
-            table_name = self.table_name([attr_class.extensions[0].type.qname])
+
+            # SQLAlchemy creates the table on the base class so keep looking for parent
+            # classes until we find the base class
+            has_extensions = True
+            while has_extensions:
+                try:
+                    _, extension_class = self.find_class_by_qname(table_qname, [])
+                    if extension_class.extensions:
+                        table_qname = self.class_name(extension_class.extensions[0].type.qname)
+                    else:
+                        has_extensions = False
+                except ValueError:
+                    has_extensions = False
+            table_name = self.table_name([table_qname])
         else:
             table_name = self.table_name(fqname.split("."))
         return 'field(default=None, metadata={{"type": XmlType.IGNORE, "sa": Column(ForeignKey(\"{}.id\", use_alter=True), index=True)}})'.format(table_name)
@@ -488,15 +514,10 @@ class SqlAlchemyTemplateFilters(Filters):
                     }
                 }
             },
-            "connexxus": {
-                "models.registry": {
-                    "connexxus_registry": ["registry.mapped"]
-                }
-            },
             "common": {
                 "db": {
                     "SqlXmlDateTime": ["SqlXmlDateTime"],
-                    "SqlXmlDate": ["SqlXmlDate("]
+                    "SqlXmlDate": ["SqlXmlDate"]
                 }
             }
         }
