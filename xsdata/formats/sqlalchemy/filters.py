@@ -72,8 +72,12 @@ class SqlAlchemyTemplateFilters(Filters):
             for parent in parents:
                 name += self.class_name(parent)
 
-        if inner:
-            name += "InnerClass"
+            # there are more than one parent, then this is an inner class
+            # put InnerClass on it so the name won't conflict with a non-inner
+            # class that might have the same name
+            if len(parents) > 1:
+                name += "InnerClass"
+
 
         return self.safe_name(name, self.class_safe_prefix, self.class_case)
 
@@ -149,20 +153,30 @@ class SqlAlchemyTemplateFilters(Filters):
                 if attr.is_tokens:
                     raise ValueError("No idea how to handle lists of lists")
 
+                # inner classes need to be handled specially
+                if "." in type_name:
+                    relationship_class_name = self.class_name("", parents=type_name.split("."))
+                else:
+                    relationship_class_name = self.class_name(type_name)
+
                 if attr.is_list:
+                    # bandaid fix for a strange obj.name being passed in as the parents
+                    # list
+                    if parents[0] == "transmissionHeader_1":
+                        parents[0] = "transmissionHeader1"
                     if name == "trKioskOrder":
                         # strange special case where these two models have multiple foreign keys
                         # going to each other and SQL alchemy can't automatically
                         # figure out the primary join
-                        return Markup(f"relationship({self.class_name(type_name)}, primaryjoin='TrHeaderType.id==TrTickNum.tr_header_type_tr_kiosk_order_id')")
+                        return Markup(f"relationship({relationship_class_name}, primaryjoin='TrHeaderType.id==TrTickNum.tr_header_type_tr_kiosk_order_id')")
                     elif name == "trRecall":
-                        return Markup(f"relationship({self.class_name(type_name)}, primaryjoin=\"TrRecall.tr_header_type_tr_recall_id==TrHeaderType.id\")")
+                        return Markup(f"relationship({relationship_class_name}, primaryjoin=\"TrRecall.tr_header_type_tr_recall_id==TrHeaderType.id\")")
                     else:
-                        return Markup(f"relationship({self.class_name(type_name)}, back_populates=\"{self.field_name(parents[-1], '')}_{self.field_name(attr.name, parent_namespace)}\")")
+                        return Markup(f"relationship({relationship_class_name}, back_populates=\"{self.field_name(parents[-1], '')}_{self.field_name(attr.name, parent_namespace)}\", foreign_keys=[{relationship_class_name}.{self.field_name(parents[-1], '')}_{self.field_name(attr.name, parent_namespace)}_id])")
                     # return "relationship(back_populates=\"{}\")".format(
                     #     self.field_case(obj.qname))
                 else:
-                    return Markup(f'relationship({self.class_name(type_name)}, back_populates="{self.field_name(parents[-1], "")}_{self.field_name(attr.name, parent_namespace)}", foreign_keys=[{self.field_name(attr.name, parent_namespace)}_id.metadata["sa"]])')
+                    return Markup(f'relationship({relationship_class_name}, back_populates="{self.field_name(parents[-1], "")}_{self.field_name(attr.name, parent_namespace)}", foreign_keys=[{self.field_name(attr.name, parent_namespace)}_id.metadata["sa"]])')
                     # if attr_class.qname not in type_names[0]:
                     #     table_name = self.table_name(type_names[0].split("."))
                     # else:
@@ -245,6 +259,8 @@ class SqlAlchemyTemplateFilters(Filters):
         Finds all other classes that have a relationship to obj recursively and
         adds a back_populating relationship field
         """
+        obj_fqname = self.find_fqname_by_class(obj)
+
         for clazz in classes:
             if clazz == obj:
                 continue
@@ -252,9 +268,8 @@ class SqlAlchemyTemplateFilters(Filters):
                 ref_attr_types = self.type_names(ref_attr, [self.class_name(clazz.qname)])
                 if not self.has_complex_types(ref_attr_types):
                     continue
-
-                ref_attr_fqname, ref_attr_class = self.find_class_by_qname(ref_attr.types[0].qname, [clazz.qname])
-                obj_fqname = self.find_fqname_by_class(obj)
+                full_class_name = self.find_fqname_by_class(clazz)
+                ref_attr_fqname, ref_attr_class = self.find_class_by_qname(ref_attr.types[0].qname, full_class_name.split("."))
                 if ref_attr_fqname == obj_fqname:
                     # has_another_attr_from_same_class = False
                     # for ref_attr_2 in clazz.attrs:
@@ -274,8 +289,11 @@ class SqlAlchemyTemplateFilters(Filters):
                     # {http://www.naxml.org/POSBO/Vocabulary/2003-10-16}TransactionTax
                     # to TransactionTax
                     class_qname = self.field_case(self.class_name(clazz.qname))
+                    if "." in full_class_name:
+                        fqname = self.class_name("", parents=full_class_name.split("."))
+                    else:
+                        fqname = self.class_name(full_class_name)
                     if ref_attr.is_list:
-                        full_class_name = self.find_fqname_by_class(clazz)
                         table_name = self.table_name(full_class_name.split("."))
                         attr_name = self.field_case(ref_attr.name)
                         # if has_another_attr_from_same_class:
@@ -286,23 +304,23 @@ class SqlAlchemyTemplateFilters(Filters):
                         relationships.append('{}_{}_id: int = field(default=None, metadata={{"type": XmlType.IGNORE, "sa": Column(ForeignKey(\"{}.id\", use_alter=True), index=True)}})'.format(class_qname, attr_name, table_name))
                         relationships.append("{qname}_{attr_name}: Optional[\"{fqname}\"] = field(default=None, metadata={{\"type\": XmlType.IGNORE, \"sa\": relationship(\"{fqname}\", foreign_keys=[{qname}_{attr_name}_id.metadata[\"sa\"]], back_populates=\"{attr_name}\")}})".format(
                             qname=class_qname,
-                            fqname=self.class_name(full_class_name),
+                            fqname=fqname,
                             attr_name=attr_name
                         ))
                     elif not ref_attr_class.is_enumeration:
 
-                        full_class_name = self.find_fqname_by_class(clazz)
                         #table_name = self.table_name(full_class_name.split("."))
                         # use qname combined with attr_name to guarantee that a model
                         # with multiple relationships to the model has unique names for
                         # each
                         relationships.append("{qname}_{attr_name}: Optional[\"{fqname}\"] = field(init=False, default_factory=list, metadata={{\"type\": XmlType.IGNORE, \"sa\": relationship(\"{fqname}\", back_populates=\"{attr_name}\", foreign_keys=\"{fqname}.{attr_name}_id\")}})".format(
                             qname=class_qname,
-                            fqname=self.class_name(full_class_name),
+                            fqname=fqname,
                             attr_name=self.field_case(ref_attr.name)
                         ))
-            # TODO this might not be required if the class_list has all of the classes in it
-            self.build_backwards_relationships(obj, clazz.inner, relationships, parents)
+
+            if clazz.inner:
+                self.build_backwards_relationships(obj, clazz.inner, relationships, parents)
         # find all classes that have a list reference to it
         return relationships
 
@@ -342,34 +360,11 @@ class SqlAlchemyTemplateFilters(Filters):
             table_name = self.table_name(fqname.split("."))
         return 'field(default=None, metadata={{"type": XmlType.IGNORE, "sa": Column(ForeignKey(\"{}.id\", use_alter=True), index=True)}})'.format(table_name)
 
-    # def build_relationships(self, obj: Class, relationships: List[str], parents: List[str]) -> None:
-    #     for attr in obj.attrs:
-    #         attr_types = self.type_names(attr, [])
-    #         if not self.has_complex_types(attr_types):
-    #             continue
-    #         attr_class = self.find_class_by_qname(attr.types[0].qname, parents)
-    #         if attr.is_list or attr_class.is_enumeration or attr.is_enumeration:
-    #             # list attributes are already handled by the normal field population
-    #             continue
-    #         else:
-    #             full_class_name = attr_class.fqname if attr_class.fqname else self.fqname(attr_class)
-    #             table_name = self.table_name(full_class_name.split("."))
-    #             relationships.append(
-    #                 '{}_id: int =
-    #             # relationships.append(
-    #             #     "{name}: \"{fqname}\" = relationship(\"{fqname}\", back_populates=\"{attr_name}\")".format(
-    #             #         name=self.field_case(attr.name),
-    #             #         fqname=self.class_name(full_class_name),
-    #             #         attr_name=self.field_case(obj.qname)
-    #             #     ))
-
-
     def relationship_backrefs(self,
         obj: Class,
         parents: List[str]
     ) -> List[str]:
         relationships = []
-        #self.build_relationships(obj, relationships, parents)
         self.build_backwards_relationships(obj, self.classes, relationships, parents)
         # find all classes that have a list reference to it
         return relationships
@@ -489,6 +484,13 @@ class SqlAlchemyTemplateFilters(Filters):
 
     def schema_name(self, obj: Class):
         return obj.package.split(".")[0]
+
+    def default_imports(self, output: str) -> str:
+        # add on future annotation import at the very top of the
+        # module to prevent any errors with annotations defined before a class
+        # is defined
+        imports: str = super().default_imports(output)
+        return "from __future__ import annotations\n" + imports
 
     @classmethod
     def build_import_patterns(cls) -> Dict[str, Dict]:

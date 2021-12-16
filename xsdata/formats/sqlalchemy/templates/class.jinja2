@@ -4,7 +4,7 @@
 {% endset -%}
 {% set parent_namespace = obj.namespace if obj.namespace is not none else parent_namespace|default(None) -%}
 {% set parents = parents|default([obj.name]) -%}
-{% set class_name =  obj.name|class_name(parents) -%}
+{% set class_name =  obj.name|class_name(parents, inner=inner) -%}
 {% set table_name = parents|table_name %}
 {% set local_name =  obj.meta_name or obj.name -%}
 {% set local_name = None if class_name == local_name or parents|length != 1 else local_name -%}
@@ -14,7 +14,7 @@
 {%- for inner in obj.inner %}
     {%- set tpl = "enum.jinja2" if inner.is_enumeration else "class.jinja2" -%}
     {%- set inner_parents = parents + [inner.name] -%}
-        {%- with obj=inner, parents=inner_parents -%}
+        {%- with obj=inner, parents=inner_parents, inner=True -%}
             {% include tpl %}
         {%- endwith -%}
 {%- endfor %}
@@ -76,7 +76,7 @@ class {{ class_name }}{{ "({})".format(base_classes) if base_classes }}:
     # XML-Defined Inner Classes
 {%- for inner in obj.inner -%}
     {%- set inner_parents = parents + [inner.name] -%}
-    {%- set inner_class_name = inner.name | class_name(inner=True) %}
+    {%- set inner_class_name = inner.name | class_name() %}
     {{ inner_class_name }} = {{ inner.name | class_name(inner_parents, inner=True) }}
 {% endfor -%}
 
