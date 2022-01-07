@@ -1,9 +1,9 @@
 
 from dataclasses import dataclass, field
-from datetime import timedelta, datetime, timezone
+from datetime import timedelta, datetime, timezone, time, date
 from decimal import Decimal
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY
 from sqlalchemy.orm import validates, relationship, registry

@@ -87,7 +87,7 @@ class SqlAlchemyTemplateFilters(Filters):
 
     def is_timezone_aware(self, attr, parents):
         type_names = self.type_names(attr, parents)
-        date_types = ["date", "datetime", "XmlDate", "XmlDateTime"]
+        date_types = ["date", "datetime", "XmlDate", "XmlDateTime", "time", "XmlTime"]
         for date_type in date_types:
             if date_type in type_names:
                 return True
@@ -139,12 +139,21 @@ class SqlAlchemyTemplateFilters(Filters):
         elif type_name == "bool":
             postgres_datatype = "Boolean"
         elif type_name == "int":
-            postgres_datatype = "Integer"
+            # use bigint to ensure we can fit most python int values in here
+            postgres_datatype = "BigInteger"
         elif type_name == "Decimal":
             postgres_datatype = "Numeric"
         # use String in the DB for Union types
-        elif type_name == "str" or len(type_names) > 1:
+        elif type_name == "str":
             postgres_datatype = "String"
+        elif len(type_names) > 1:
+            # if all of the types are string or enum, use string enum
+            if all((t == 'str' or t.endswith('Enum')) for t in type_names):
+                postgres_datatype = "StringEnum"
+            # else, we aren't sure what this type should be so use string to hope
+            # string marshalling will work
+            else:
+                postgres_datatype = "String"
         elif self.has_complex_types(type_names):
             attr_fqname, attr_class = self.find_class_by_qname(attr.types[0].qname, parents)
             if attr_class.is_enumeration:

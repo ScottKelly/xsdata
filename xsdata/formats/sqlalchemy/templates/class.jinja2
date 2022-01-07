@@ -64,11 +64,18 @@ class {{ class_name }}{{ "({})".format(base_classes) if base_classes }}:
     def validate_{{ attr_name }}(self, key, {{ attr_name }}):
         if isinstance({{ attr_name }}, XmlDateTime) or isinstance({{ attr_name }}, XmlDate):
             self.{{ attr_name }}_utc_offset = {{ attr_name }}.to_datetime().utcoffset()
+        elif isinstance({{ attr_name }}, XmlTime):
+            self.{{ attr_name }}_utc_offset = {{ attr_name }}.to_time().utcoffset()
         return {{ attr_name }}
 
     @property
-    def {{ attr_name }}_with_utc_offset(self) -> datetime:
-         return self.{{ attr_name }}.to_datetime().astimezone(tz=timezone(self.{{ attr_name }}_utc_offset))
+    def {{ attr_name }}_with_utc_offset(self) -> Union[datetime, time]:
+        if isinstance(self.{{ attr_name }}, XmlTime):
+            return self.{{ attr_name }}.to_time().replace(tzinfo=timezone(self.{{ attr_name }}_utc_offset))
+        elif isinstance(self.{{ attr_name }}, XmlDate) or isinstance(self.{{ attr_name }}, XmlDateTime):
+            return self.{{ attr_name }}.to_datetime().astimezone(tz=timezone(self.{{ attr_name }}_utc_offset))
+        else:
+            raise ValueError(f"{{ attr_name }} is an unexpected type of { type(self.{{ attr_name }}) }")
 
     {% endif %}
 {% endfor %}
